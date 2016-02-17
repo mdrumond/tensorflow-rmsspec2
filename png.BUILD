@@ -24,7 +24,7 @@ genrule(
     name = "configure",
     srcs = glob(
         ["**/*"],
-        exclude = [prefix_dir + "/config.h"],
+        exclude = [prefix_dir + "/config.h", "configure"],
     ),
     outs = [prefix_dir + "/config.h"],
     cmd = "pushd external/png_archive/%s; workdir=$$(mktemp -d -t tmp.XXXXXXXXXX); cp -a * $$workdir; pushd $$workdir; ./configure --enable-shared=no --with-pic=no; popd; popd; cp $$workdir/config.h $(@D); rm -rf $$workdir;" % prefix_dir,

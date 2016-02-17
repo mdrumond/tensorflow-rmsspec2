@@ -17,3 +17,14 @@ node_modules
 /util/python/python_include
 /util/python/python_lib
 /pip_test
+/deps
+
+# -*- mode: gitignore; -*-
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+auto-save-list
+tramp
+.\#*

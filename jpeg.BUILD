@@ -68,7 +68,7 @@ genrule(
     name = "configure",
     srcs = glob(
         ["**/*"],
-        exclude = [prefix_dir + "/jconfig.h"],
+        exclude = [prefix_dir + "/jconfig.h", "configure"],
     ),
     outs = [prefix_dir + "/jconfig.h"],
     cmd = "pushd external/jpeg_archive/%s; workdir=$$(mktemp -d -t tmp.XXXXXXXXXX); cp -a * $$workdir; pushd $$workdir; ./configure; popd; popd; cp $$workdir/jconfig.h $(@D); rm -rf $$workdir;" % prefix_dir,
