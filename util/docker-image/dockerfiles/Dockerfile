@@ -3,7 +3,7 @@ FROM ubuntu:15.10
 # Basic docker parsa image: build-essentials, ssh and a parsa user
 RUN apt-get update && apt-get install -y build-essential checkinstall wget python-pip sudo python-dev openssh-server \
              swig software-properties-common openjdk-8-jdk pkg-config python-numpy zip g++ zlib1g-dev unzip git-all \
-	     emacs24-nox && \
+	     emacs24-nox python3-numpy python3-dev python3-setuptools && \
      mkdir /var/run/sshd && \
     echo 'root:root' | chpasswd && \
     echo 'ALL: LOCAL' > /etc/ssh/hosts.allow && \
@@ -12,8 +12,8 @@ RUN apt-get update && apt-get install -y build-essential checkinstall wget pytho
     useradd -d /home/parsa -m parsa && \
     adduser parsa sudo && \
     echo 'parsa:parsa' | chpasswd && \
-    easy_install pip && \
-    pip install wheel && \
+    easy_install3 pip && \
+    pip3 xinstall wheel && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* && \
     rm /bin/sh && ln -s /bin/bash /bin/sh && \
@@ -21,13 +21,18 @@ RUN apt-get update && apt-get install -y build-essential checkinstall wget pytho
 
 USER parsa
 ENV HOME /home/parsa
-RUN cd ~/ && \
+
+RUN git config --global user.email "mario.drumond@epfl.ch" && \
+    git config --global user.name "Mario Paulo Drumond" && \
+    cd ~/ && \
     git clone https://github.com/StateFarmIns/bazel.git && \
     cd bazel && \
     ./compile.sh && \
     echo "export PATH=/home/parsa/bazel/output:$PATH" >> $HOME/.bashrc && \
     cd ~/ && \
-    git clone --recurse-submodules https://github.com/mdrumond/tensorflow.git
+    git clone --recurse-submodules https://github.com/mdrumond/tensorflow.git && \
+    cd ~/tensorflow && \
+    ./get_deps.sh
  
 USER root
 CMD ["/usr/sbin/sshd", "-D"]
