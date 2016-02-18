@@ -16,7 +16,8 @@ RUN apt-get update && apt-get install -y build-essential checkinstall wget pytho
     pip install wheel && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* && \
-    rm /bin/sh && ln -s /bin/bash /bin/sh
+    rm /bin/sh && ln -s /bin/bash /bin/sh && \
+    sudo update-ca-certificates -f
 
 USER parsa
 ENV HOME /home/parsa
