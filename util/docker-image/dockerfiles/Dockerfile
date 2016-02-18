@@ -21,7 +21,9 @@ RUN apt-get update && apt-get install -y build-essential checkinstall wget pytho
 USER parsa
 ENV HOME /home/parsa
 
-RUN cd ~/ && \
+RUN git config --global user.email "mario.drumond@epfl.ch" && \
+    git config --global user.name "Mario Paulo Drumond" && \
+    cd ~/ && \
     git clone https://github.com/StateFarmIns/bazel.git && \
     cd bazel && \
     ./compile.sh && \
