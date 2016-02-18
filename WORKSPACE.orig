@@ -90,7 +90,7 @@ new_local_repository(
 
 new_local_repository(
   name = "six_archive",
-  path = "__LOCAL_REPO_DIR__/six-1.10.0",
+  path = "__LOCAL_REPO_DIR__",
   build_file = "six.BUILD",
 )
 
