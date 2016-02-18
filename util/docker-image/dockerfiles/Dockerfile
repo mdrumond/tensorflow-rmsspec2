@@ -1,0 +1,32 @@
+FROM ubuntu:15.10
+
+# Basic docker parsa image: build-essentials, ssh and a parsa user
+RUN apt-get update && apt-get install -y build-essential checkinstall wget python-pip sudo python-dev openssh-server \
+             swig software-properties-common openjdk-8-jdk pkg-config python-numpy zip g++ zlib1g-dev unzip git-all \
+	     emacs24-nox && \
+     mkdir /var/run/sshd && \
+    echo 'root:root' | chpasswd && \
+    echo 'ALL: LOCAL' > /etc/ssh/hosts.allow && \
+    sed -i 's/PermitRootLogin without-password/PermitRootLogin yes/' /etc/ssh/sshd_config && \
+    sed 's@session\s*required\s*pam_loginuid.so@session optional pam_loginuid.so@g' -i /etc/pam.d/sshd && \
+    useradd -d /home/parsa -m parsa && \
+    adduser parsa sudo && \
+    echo 'parsa:parsa' | chpasswd && \
+    easy_install pip && \
+    pip install wheel && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* && \
+    rm /bin/sh && ln -s /bin/bash /bin/sh
+
+USER parsa
+ENV HOME /home/parsa
+RUN cd ~/ && \
+    git clone https://github.com/StateFarmIns/bazel.git && \
+    cd bazel && \
+    ./compile.sh && \
+    echo "export PATH=/home/parsa/bazel/output:$PATH" >> $HOME/.bashrc && \
+    cd ~/ && \
+    git clone --recurse-submodules https://github.com/mdrumond/tensorflow.git
+ 
+USER root
+CMD ["/usr/sbin/sshd", "-D"]
