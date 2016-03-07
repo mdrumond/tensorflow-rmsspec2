@@ -10,7 +10,7 @@ SCRIPTS_PATH="`dir_resolve \"../scripts\"`"
 
 docker run -d \
     -p 0.0.0.0:2222:22 \
-    -p 0.0.0.0:6006:7007 \
+    -p 0.0.0.0:7007:6006 \
     --name tensorflow \
     -v $DATA_PATH:/data \
     -v $SCRIPTS_PATH:/scripts \
