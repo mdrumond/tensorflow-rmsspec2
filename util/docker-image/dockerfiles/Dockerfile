@@ -13,10 +13,11 @@ RUN apt-get update && apt-get install -y build-essential checkinstall wget pytho
     adduser parsa sudo && \
     echo 'parsa:parsa' | chpasswd && \
     easy_install3 pip && \
-    pip3 xinstall wheel && \
+    pip3 install wheel && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* && \
-    rm /bin/sh && ln -s /bin/bash /bin/sh
+    rm /bin/sh && ln -s /bin/bash /bin/sh && \
+    sudo update-ca-certificates -f
 
 USER parsa
 ENV HOME /home/parsa
