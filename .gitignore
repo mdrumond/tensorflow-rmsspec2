@@ -18,7 +18,8 @@ node_modules
 /util/python/python_lib
 /pip_test
 /deps
-
+/examples/data
+/ssd/logs
 # -*- mode: gitignore; -*-
 *~
 \#*\#
