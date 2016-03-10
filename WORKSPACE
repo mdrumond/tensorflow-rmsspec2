@@ -90,7 +90,7 @@ new_local_repository(
 
 new_local_repository(
   name = "six_archive",
-  path = "/home/parsa/tensorflow/deps/six-1.10.0",
+  path = "/home/parsa/tensorflow/deps",
   build_file = "six.BUILD",
 )
 
