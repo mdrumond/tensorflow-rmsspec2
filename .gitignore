@@ -20,6 +20,7 @@ node_modules
 /deps
 /examples/data
 /ssd/logs
+/_python_build
 # -*- mode: gitignore; -*-
 *~
 \#*\#
