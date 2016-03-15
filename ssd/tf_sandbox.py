@@ -14,12 +14,75 @@ flags.DEFINE_boolean('fake_data', False, 'If true, uses fake data '
 flags.DEFINE_integer('max_steps', 1000, 'Number of steps to run trainer.')
 flags.DEFINE_float('learning_rate', 0.01, 'Initial learning rate.')
 
+def runTestSession(feed,graph,golden_res):
+    # Do whatever calculation I want to test (build the graph)
+    sess = tf.InteractiveSession()
+
+    merged = tf.merge_all_summaries()
+    writer = tf.train.SummaryWriter('logs', sess.graph_def)
+    result = sess.run(graph, feed_dict=feed)
+
+    print("\n\ngolden result:")
+    print(golden_res)
+    print("result:")
+    print(result)
+
+
 def logSoftMax(vector):
-    maxLogit= tf.reduce_max(vector,reduction_indices=1) # [batch_size]
-    lse = tf.log( tf.reduceSum(tf.exp( logits - maxLogit ) + maxLogit) )
+    maxLogit= tf.reduce_max(vector,reduction_indices=1,keep_dims=True) # [batch_size]
+    lse = tf.log( tf.reduce_sum(tf.exp( vector - maxLogit ), reduction_indices=1, keep_dims=True ) ) + maxLogit
     return vector - lse
 
+def test_logSoftMax():
+    # NumpyArrays
+    inputA = np.array([[1.,2.,3.],[4.,5.,6.],[7.,8.,9.],[10.,11.,12.]])
 
+    print("Inputs:")
+    print(inputA)
+
+    def numpyTest():
+        maxLogit = np.apply_along_axis(np.max,1,inputA) # returns [batch]
+        print(maxLogit)
+        expSubMax = np.exp(np.apply_along_axis(np.subtract,0,inputA,maxLogit)) # returns [batch,classes]
+        print(expSubMax)
+        lse =  np.log( np.sum(expSubMax, axis=1) ) + maxLogit # returns [batch]
+        print(lse)
+        return np.apply_along_axis(np.subtract,0,inputA,lse) # returns [batch,classes]
+
+    tf_inA = tf.placeholder(tf.float32, [4,3], name='input1')
+    tf_graph=logSoftMax(tf_inA)
+    feed = {tf_inA : inputA}
+    runTestSession(feed,tf_graph,numpyTest())
+    
+
+def test_NNLCriterion():
+    # NumpyArrays
+    inputA = np.array([[1.,2.,3.],[4.,5.,6.],[7.,8.,9.],[10.,11.,12.]])
+    labels = np.array([2,1,0,1], dtype=np.int32)
+    
+    def numpyTest():
+        numPyOut = np.empty(inputA.shape[0])
+        for currLine in range(inputA.shape[0]):
+            numPyOut[currLine] = - inputA[currLine][labels[currLine]]
+            
+        return numPyOut
+    
+    tf_inA = tf.placeholder(tf.float32, [4,3], name='input1')
+    tf_labels = tf.placeholder(tf.int32,4,name='labels')
+
+    def tf_graph(inA, labels):
+        batch_size = tf.size(labels)
+        labels = tf.expand_dims(labels, 1)
+        indices = tf.expand_dims(tf.range(0, batch_size), 1)
+        concated = tf.concat(1, [indices, labels])
+        onehot_labels = tf.sparse_to_dense(
+            concated, tf.pack([batch_size, 3]), 1.0, 0.0)
+        return - tf.reduce_sum(tf.mul(inA, onehot_labels), reduction_indices=1)
+    
+    feed = {tf_inA : inputA, tf_labels : labels}
+    runTestSession(feed,tf_graph(tf_inA,tf_labels),numpyTest())
+
+        
 def test_sandbox():
     # Create a tensor with dummy vaules
     # NumpyArrays
@@ -33,30 +96,20 @@ def test_sandbox():
     def numpyTest():
         return np.dot(inputA,inputB)
 
-    # Do whatever calculation I want to test (build the graph)
-    sess = tf.InteractiveSession()
 
     in1 = tf.placeholder(tf.float32, [3,2], name='input1')
     in2 = tf.placeholder(tf.float32, [2,4], name='input2')
 
     #out1 = tf.placeholder(tf.float32, [3,4], name='output')
-
     with tf.name_scope('test-matmul'):
         out_tf = tf.matmul( in1, in2 )
         
-    merged = tf.merge_all_summaries()
-    writer = tf.train.SummaryWriter('logs', sess.graph_def)
     #tf.initialize_all_variables().run() # no idea what this does
     
     # Execute and print result
 
     feed = {in1: inputA, in2: inputB}
-    result = sess.run(out_tf, feed_dict=feed)
-
-    print("\n\ngolden result:")
-    print(numpyTest())
-    print("result:")
-    print(result)
+    runTestSession(feed,out_tf,numpyTest())
     
     #summary_str = result[0]
     #outputGraph = result[1]
@@ -128,7 +181,7 @@ def test_tensorboard(_):
 
 
 def main(_):
-    test_sandbox()
+    test_NNLCriterion()
     
 if __name__ == '__main__':
     tf.app.run()

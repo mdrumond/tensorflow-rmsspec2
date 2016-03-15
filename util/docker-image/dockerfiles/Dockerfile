@@ -28,11 +28,14 @@ RUN git config --global user.email "mario.drumond@epfl.ch" && \
     git clone https://github.com/StateFarmIns/bazel.git && \
     cd bazel && \
     ./compile.sh && \
-    echo "export PATH=/home/parsa/bazel/output:$PATH" >> $HOME/.bashrc && \
+    pip3 install --upgrade virtualenv --user
+    echo 'export PATH=/home/parsa/bazel/output:/home/parsa/.local/bin:$PATH' >> $HOME/.bashrc && \
     cd ~/ && \
     git clone --recurse-submodules https://github.com/mdrumond/tensorflow.git && \
     cd ~/tensorflow && \
     ./get_deps.sh
- 
+
+COPY .emacs /home/parsa/.emacs
+
 USER root
 CMD ["/usr/sbin/sshd", "-D"]
