@@ -23,6 +23,8 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import collections
+
 from six.moves import xrange  # pylint: disable=redefined-builtin
 
 from tensorflow.python.framework import dtypes
@@ -35,7 +37,7 @@ from tensorflow.python.ops import io_ops
 from tensorflow.python.ops import logging_ops
 from tensorflow.python.ops import math_ops
 from tensorflow.python.ops import random_ops
-from tensorflow.python.ops import summary_ops
+from tensorflow.python.ops import sparse_ops
 from tensorflow.python.ops import variables
 from tensorflow.python.training import queue_runner
 
@@ -83,23 +85,23 @@ def limit_epochs(tensor, num_epochs=None, name=None):
 
 
 def _input_producer(input_tensor, dtype, num_epochs, shuffle, seed, capacity,
-                    name, summary_name):
+                    shared_name, name, summary_name):
   if shuffle:
     input_tensor = random_ops.random_shuffle(input_tensor, seed=seed)
   input_tensor = limit_epochs(input_tensor, num_epochs)
 
   q = data_flow_ops.FIFOQueue(capacity=capacity, dtypes=[dtype], shapes=[[]],
-                              name=name)
+                              shared_name=shared_name, name=name)
   enq = q.enqueue_many([input_tensor])
   queue_runner.add_queue_runner(queue_runner.QueueRunner(q, [enq]))
-  summary_ops.scalar_summary("queue/%s/%s" % (q.name, summary_name),
+  logging_ops.scalar_summary("queue/%s/%s" % (q.name, summary_name),
                              math_ops.cast(q.size(), dtypes.float32) *
                              (1. / capacity))
   return q
 
 
 def string_input_producer(string_tensor, num_epochs=None, shuffle=True,
-                          seed=None, capacity=32, name=None):
+                          seed=None, capacity=32, shared_name=None, name=None):
   """Output strings (e.g. filenames) to a queue for an input pipeline.
 
   Args:
@@ -113,6 +115,8 @@ def string_input_producer(string_tensor, num_epochs=None, shuffle=True,
       epoch.
     seed: An integer (optional). Seed used if shuffle == True.
     capacity: An integer. Sets the queue capacity.
+    shared_name: (optional). If set, this queue will be shared under the given
+      name across multiple sessions.
     name: A name for the operations (optional).
 
   Returns:
@@ -124,7 +128,7 @@ def string_input_producer(string_tensor, num_epochs=None, shuffle=True,
     will fail with an assertion if string_tensor becomes a null tensor.
   """
   not_null_err = "string_input_producer requires a non-null input tensor"
-  if not string_tensor:
+  if not isinstance(string_tensor, ops.Tensor) and not string_tensor:
     raise ValueError(not_null_err)
 
   with ops.op_scope([string_tensor], name, "input_producer") as name:
@@ -134,12 +138,19 @@ def string_input_producer(string_tensor, num_epochs=None, shuffle=True,
                            [not_null_err])]):
       string_tensor = array_ops.identity(string_tensor)
     return _input_producer(
-        string_tensor, dtypes.string, num_epochs, shuffle, seed, capacity, name,
-        "fraction_of_%d_full" % capacity)
+        input_tensor=string_tensor,
+        dtype=dtypes.string,
+        num_epochs=num_epochs,
+        shuffle=shuffle,
+        seed=seed,
+        capacity=capacity,
+        shared_name=shared_name,
+        name=name,
+        summary_name="fraction_of_%d_full" % capacity)
 
 
 def range_input_producer(limit, num_epochs=None, shuffle=True, seed=None,
-                         capacity=32, name=None):
+                         capacity=32, shared_name=None, name=None):
   """Produces the integers from 0 to limit-1 in a queue.
 
   Args:
@@ -152,6 +163,8 @@ def range_input_producer(limit, num_epochs=None, shuffle=True, seed=None,
       epoch.
     seed: An integer (optional). Seed used if shuffle == True.
     capacity: An integer. Sets the queue capacity.
+    shared_name: (optional). If set, this queue will be shared under the given
+      name across multiple sessions.
     name: A name for the operations (optional).
 
   Returns:
@@ -161,12 +174,12 @@ def range_input_producer(limit, num_epochs=None, shuffle=True, seed=None,
   with ops.op_scope([limit], name, "input_producer") as name:
     range_tensor = math_ops.range(limit)
     return _input_producer(
-        range_tensor, dtypes.int32, num_epochs, shuffle, seed, capacity, name,
-        "fraction_of_%d_full" % capacity)
+        range_tensor, dtypes.int32, num_epochs, shuffle, seed, capacity,
+        shared_name, name, "fraction_of_%d_full" % capacity)
 
 
 def slice_input_producer(tensor_list, num_epochs=None, shuffle=True, seed=None,
-                         capacity=32, name=None):
+                         capacity=32, shared_name=None, name=None):
   """Produces a slice of each `Tensor` in `tensor_list`.
 
   Implemented using a Queue -- a `QueueRunner` for the Queue
@@ -183,6 +196,8 @@ def slice_input_producer(tensor_list, num_epochs=None, shuffle=True, seed=None,
       epoch.
     seed: An integer (optional). Seed used if shuffle == True.
     capacity: An integer. Sets the queue capacity.
+    shared_name: (optional). If set, this queue will be shared under the given
+      name across multiple sessions.
     name: A name for the operations (optional).
 
   Returns:
@@ -202,7 +217,8 @@ def slice_input_producer(tensor_list, num_epochs=None, shuffle=True, seed=None,
     # TODO(josh11b): Add an assertion that the first dimension of
     # everything in TensorList matches. Maybe just check the inferred shapes?
     queue = range_input_producer(range_size, num_epochs=num_epochs,
-                                 shuffle=shuffle, seed=seed, capacity=capacity)
+                                 shuffle=shuffle, seed=seed, capacity=capacity,
+                                 shared_name=shared_name)
     index = queue.dequeue()
     output = [array_ops.gather(t, index) for t in tensor_list]
     return output
@@ -213,6 +229,54 @@ def slice_input_producer(tensor_list, num_epochs=None, shuffle=True, seed=None,
 
 def _flatten(tensor_list_list):
   return [tensor for tensor_list in tensor_list_list for tensor in tensor_list]
+
+
+def _serialize_sparse_tensors(tensor_list, enqueue_many):
+  """Serialize SparseTensors for feeding into batch, etc."""
+  is_sparse_list = [isinstance(t, ops.SparseTensor) for t in tensor_list]
+  sparse_dtypes_list = [
+      t.dtype if isinstance(t, ops.SparseTensor) else None
+      for t in tensor_list]
+
+  def _maybe_serialize(t, is_sparse):
+    if not is_sparse:
+      return t
+    return (sparse_ops.serialize_many_sparse(t) if enqueue_many
+            else sparse_ops.serialize_sparse(t))
+  serialized_list = [
+      _maybe_serialize(t, is_sparse)
+      for (t, is_sparse) in zip(tensor_list, is_sparse_list)]
+  return serialized_list, is_sparse_list, sparse_dtypes_list
+
+
+def _serialize_sparse_tensors_join(tensor_list_list, enqueue_many):
+  """Serialize SparseTensors for feeding into batch_join, etc."""
+  (s0, is_sparse_list, sparse_dtypes_list) = _serialize_sparse_tensors(
+      tensor_list_list[0], enqueue_many)
+  serialized_list_list = [s0]
+  for tensor_list in tensor_list_list[1:]:
+    (s, is_sparse_candidate, sparse_dtypes_candidate) = (
+        _serialize_sparse_tensors(tensor_list, enqueue_many))
+    if is_sparse_candidate != is_sparse_list:
+      raise ValueError("Inconsistent SparseTensors list: %s vs. %s"
+                       % (tensor_list_list[0], tensor_list))
+    if sparse_dtypes_candidate != sparse_dtypes_list:
+      raise ValueError("Inconsistent SparseTensor dtypes in list: %s vs. %s"
+                       % (tensor_list_list[0], tensor_list))
+    serialized_list_list.append(s)
+  return (serialized_list_list, is_sparse_list, sparse_dtypes_list)
+
+
+def _deserialize_sparse_tensors(serialized_list, is_sparse_list, sparse_dtypes):
+  """Deserialize SparseTensors after dequeue in batch, batch_join, etc."""
+  received_sequence = isinstance(serialized_list, collections.Sequence)
+  if not received_sequence:
+    serialized_list = (serialized_list,)
+  tensors = [sparse_ops.deserialize_many_sparse(s, sparse_dtype) if is_sparse
+             else s
+             for (s, is_sparse, sparse_dtype)
+             in zip(serialized_list, is_sparse_list, sparse_dtypes)]
+  return tensors if received_sequence else tensors[0]
 
 
 def _validate(tensor_list):
@@ -281,7 +345,7 @@ def _enqueue(queue, tensor_list, threads, enqueue_many):
 
 
 def batch(tensor_list, batch_size, num_threads=1, capacity=32,
-          enqueue_many=False, shapes=None, name=None):
+          enqueue_many=False, shapes=None, shared_name=None, name=None):
   """Creates batches of tensors in `tensor_list`.
 
   This function is implemented using a queue. A `QueueRunner` for the
@@ -317,6 +381,8 @@ def batch(tensor_list, batch_size, num_threads=1, capacity=32,
     enqueue_many: Whether each tensor in `tensor_list` is a single example.
     shapes: (Optional) The shapes for each example.  Defaults to the
       inferred shapes for `tensor_list`.
+    shared_name: (optional). If set, this queue will be shared under the given
+      name across multiple sessions.
     name: (Optional) A name for the operations.
 
   Returns:
@@ -328,16 +394,21 @@ def batch(tensor_list, batch_size, num_threads=1, capacity=32,
   """
   with ops.op_scope(tensor_list, name, "batch") as name:
     tensor_list = _validate(tensor_list)
+    tensor_list, is_sparse, sparse_dtypes = _serialize_sparse_tensors(
+        tensor_list, enqueue_many)
     types = _dtypes([tensor_list])
     shapes = _shapes([tensor_list], shapes, enqueue_many)
     # TODO(josh11b,mrry): Switch to BatchQueue once it is written.
     queue = data_flow_ops.FIFOQueue(
-        capacity=capacity, dtypes=types, shapes=shapes)
+        capacity=capacity, dtypes=types, shapes=shapes, shared_name=shared_name)
     _enqueue(queue, tensor_list, num_threads, enqueue_many)
-    summary_ops.scalar_summary(
+    logging_ops.scalar_summary(
         "queue/%s/fraction_of_%d_full" % (queue.name, capacity),
         math_ops.cast(queue.size(), dtypes.float32) * (1. / capacity))
-    return queue.dequeue_many(batch_size, name=name)
+
+    dequeued = queue.dequeue_many(batch_size, name=name)
+    dequeued = _deserialize_sparse_tensors(dequeued, is_sparse, sparse_dtypes)
+    return dequeued
 
 
 # TODO(josh11b): Add a thread_multiplier or num_threads (that has to be
@@ -347,7 +418,7 @@ def batch(tensor_list, batch_size, num_threads=1, capacity=32,
 # read that many files in parallel due to the number of seeks required).
 # Once this is done, batch() can be written as a call to batch_join().
 def batch_join(tensor_list_list, batch_size, capacity=32, enqueue_many=False,
-               shapes=None, name=None):
+               shapes=None, shared_name=None, name=None):
   """Runs a list of tensors to fill a queue to create batches of examples.
 
   Enqueues a different list of tensors in different threads.
@@ -393,6 +464,8 @@ def batch_join(tensor_list_list, batch_size, capacity=32, enqueue_many=False,
       example.
     shapes: (Optional) The shapes for each example.  Defaults to the
       inferred shapes for `tensor_list_list[i]`.
+    shared_name: (Optional) If set, this queue will be shared under the given
+      name across multiple sessions.
     name: (Optional) A name for the operations.
 
   Returns:
@@ -405,21 +478,26 @@ def batch_join(tensor_list_list, batch_size, capacity=32, enqueue_many=False,
   """
   with ops.op_scope(_flatten(tensor_list_list), name, "batch_join") as name:
     tensor_list_list = _validate_join(tensor_list_list)
+    tensor_list_list, is_sparse, sparse_dtypes = (
+        _serialize_sparse_tensors_join(tensor_list_list, enqueue_many))
     types = _dtypes(tensor_list_list)
     shapes = _shapes(tensor_list_list, shapes, enqueue_many)
     # TODO(josh11b,mrry): Switch to BatchQueue once it is written.
     queue = data_flow_ops.FIFOQueue(
-        capacity=capacity, dtypes=types, shapes=shapes)
+        capacity=capacity, dtypes=types, shapes=shapes, shared_name=shared_name)
     _enqueue_join(queue, tensor_list_list, enqueue_many)
-    summary_ops.scalar_summary(
+    logging_ops.scalar_summary(
         "queue/%s/fraction_of_%d_full" % (queue.name, capacity),
         math_ops.cast(queue.size(), dtypes.float32) * (1. / capacity))
-    return queue.dequeue_many(batch_size, name=name)
+
+    dequeued = queue.dequeue_many(batch_size, name=name)
+    dequeued = _deserialize_sparse_tensors(dequeued, is_sparse, sparse_dtypes)
+    return dequeued
 
 
 def shuffle_batch(tensor_list, batch_size, capacity, min_after_dequeue,
                   num_threads=1, seed=None, enqueue_many=False, shapes=None,
-                  name=None):
+                  shared_name=None, name=None):
   """Creates batches by randomly shuffling tensors.
 
   This function adds the following to the current `Graph`:
@@ -476,6 +554,8 @@ def shuffle_batch(tensor_list, batch_size, capacity, min_after_dequeue,
     enqueue_many: Whether each tensor in `tensor_list` is a single example.
     shapes: (Optional) The shapes for each example.  Defaults to the
       inferred shapes for `tensor_list`.
+    shared_name: (Optional) If set, this queue will be shared under the given
+      name across multiple sessions.
     name: (Optional) A name for the operations.
 
   Returns:
@@ -487,11 +567,13 @@ def shuffle_batch(tensor_list, batch_size, capacity, min_after_dequeue,
   """
   with ops.op_scope(tensor_list, name, "shuffle_batch") as name:
     tensor_list = _validate(tensor_list)
+    tensor_list, is_sparse, sparse_dtypes = _serialize_sparse_tensors(
+        tensor_list, enqueue_many)
     types = _dtypes([tensor_list])
     shapes = _shapes([tensor_list], shapes, enqueue_many)
     queue = data_flow_ops.RandomShuffleQueue(
         capacity=capacity, min_after_dequeue=min_after_dequeue, seed=seed,
-        dtypes=types, shapes=shapes)
+        dtypes=types, shapes=shapes, shared_name=shared_name)
     _enqueue(queue, tensor_list, num_threads, enqueue_many)
     full = (math_ops.cast(math_ops.maximum(0, queue.size() - min_after_dequeue),
                           dtypes.float32) *
@@ -501,14 +583,16 @@ def shuffle_batch(tensor_list, batch_size, capacity, min_after_dequeue,
     summary_name = (
         "queue/%sfraction_over_%d_of_%d_full" %
         (name, min_after_dequeue, capacity - min_after_dequeue))
-    summary_ops.scalar_summary(summary_name, full)
+    logging_ops.scalar_summary(summary_name, full)
 
-    return queue.dequeue_many(batch_size, name=name)
+    dequeued = queue.dequeue_many(batch_size, name=name)
+    dequeued = _deserialize_sparse_tensors(dequeued, is_sparse, sparse_dtypes)
+    return dequeued
 
 
 def shuffle_batch_join(tensor_list_list, batch_size, capacity,
                        min_after_dequeue, seed=None, enqueue_many=False,
-                       shapes=None, name=None):
+                       shapes=None, shared_name=None, name=None):
   """Create batches by randomly shuffling tensors.
 
   This version enqueues a different list of tensors in different threads.
@@ -554,6 +638,8 @@ def shuffle_batch_join(tensor_list_list, batch_size, capacity,
       example.
     shapes: (Optional) The shapes for each example.  Defaults to the
       inferred shapes for `tensor_list_list[i]`.
+    shared_name: (optional). If set, this queue will be shared under the given
+      name across multiple sessions.
     name: (Optional) A name for the operations.
 
   Returns:
@@ -566,11 +652,13 @@ def shuffle_batch_join(tensor_list_list, batch_size, capacity,
   with ops.op_scope(
       _flatten(tensor_list_list), name, "shuffle_batch_join") as name:
     tensor_list_list = _validate_join(tensor_list_list)
+    tensor_list_list, is_sparse, sparse_dtypes = (
+        _serialize_sparse_tensors_join(tensor_list_list, enqueue_many))
     types = _dtypes(tensor_list_list)
     shapes = _shapes(tensor_list_list, shapes, enqueue_many)
     queue = data_flow_ops.RandomShuffleQueue(
         capacity=capacity, min_after_dequeue=min_after_dequeue, seed=seed,
-        dtypes=types, shapes=shapes)
+        dtypes=types, shapes=shapes, shared_name=shared_name)
     _enqueue_join(queue, tensor_list_list, enqueue_many)
     full = (math_ops.cast(math_ops.maximum(0, queue.size() - min_after_dequeue),
                           dtypes.float32) *
@@ -580,5 +668,8 @@ def shuffle_batch_join(tensor_list_list, batch_size, capacity,
     summary_name = (
         "queue/%sfraction_over_%d_of_%d_full" %
         (name, min_after_dequeue, capacity - min_after_dequeue))
-    summary_ops.scalar_summary(summary_name, full)
-    return queue.dequeue_many(batch_size, name=name)
+    logging_ops.scalar_summary(summary_name, full)
+
+    dequeued = queue.dequeue_many(batch_size, name=name)
+    dequeued = _deserialize_sparse_tensors(dequeued, is_sparse, sparse_dtypes)
+    return dequeued

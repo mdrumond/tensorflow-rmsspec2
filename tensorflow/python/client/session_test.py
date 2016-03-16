@@ -25,8 +25,9 @@ import numpy as np
 import six
 from six.moves import xrange  # pylint: disable=redefined-builtin
 
-from tensorflow.core.framework import config_pb2
+from tensorflow.core.framework import step_stats_pb2
 from tensorflow.core.lib.core import error_codes_pb2
+from tensorflow.core.protobuf import config_pb2
 from tensorflow.python.client import session
 from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import ops
@@ -107,6 +108,19 @@ class SessionTest(test_util.TensorFlowTestCase):
       a = array_ops.placeholder(dtypes.float32)
       with self.assertRaisesOpError(lambda e: e.op == a.op):
         a.eval()
+
+  def testErrorCodeWithNoNodeDef(self):
+    with session.Session() as s:
+      a = array_ops.placeholder(dtypes.float32, shape=[])
+      b = array_ops.placeholder(dtypes.float32, shape=[])
+      r1 = math_ops.add(a, b)
+
+      def exc_predicate(e):
+        return (e.op is None and e.node_def is None and
+                e.error_code == error_codes_pb2.INVALID_ARGUMENT)
+      with self.assertRaisesOpError(exc_predicate):
+        # Run with a bogus handle.
+        s.partial_run('foo', r1, feed_dict={a: 1, b: 2})
 
   def testOpConstructionErrorPayload(self):
     with session.Session():
@@ -672,7 +686,8 @@ class SessionTest(test_util.TensorFlowTestCase):
                     dtypes.int8,
                     dtypes.int64,
                     dtypes.bool,
-                    dtypes.complex64]:
+                    dtypes.complex64,
+                    dtypes.complex128]:
         for shape in [(32, 4, 128), (37,), (2, 0, 6), (0, 0, 0)]:
           np_dtype = dtype.as_numpy_dtype
 
@@ -683,6 +698,8 @@ class SessionTest(test_util.TensorFlowTestCase):
 
           if dtype == dtypes.bool:
             np_array = np_array > 0
+          elif dtype == dtypes.complex64:
+            np_array = np.sqrt(np_array.astype(np_dtype))
           elif dtype == dtypes.complex64:
             np_array = np.sqrt(np_array.astype(np_dtype))
           else:
@@ -750,7 +767,9 @@ class SessionTest(test_util.TensorFlowTestCase):
       self.assertEqual(c_list[1], out[1].decode('utf-8'))
 
   def testInvalidTargetFails(self):
-    with self.assertRaises(RuntimeError):
+    with self.assertRaisesRegexp(
+        RuntimeError,
+        'No session factory registered for the given session options.'):
       session.Session('INVALID_TARGET')
 
   def testFetchByNameDifferentStringTypes(self):
@@ -862,11 +881,58 @@ class SessionTest(test_util.TensorFlowTestCase):
       res = sess.partial_run(h2, r2, feed_dict={c: 7})
       self.assertEqual(462, res)
 
+  def testManyPartialRun(self):
+    with session.Session() as sess:
+      steps = 200
+      inputs = []
+      outputs = []
+      a = constant_op.constant(2.0, dtypes.float32)
+      for i in xrange(steps):
+        inputs.append(array_ops.placeholder(dtypes.float32, shape=[]))
+        a = math_ops.mul(a, inputs[i])
+        outputs.append(a)
+
+      h = sess.partial_run_setup(outputs, inputs)
+      for i in xrange(steps):
+        res = sess.partial_run(h, outputs[i], feed_dict={inputs[i]: 1.0})
+      self.assertEqual(2.0, res)
+
+      feed_dict = {}
+      for i in xrange(steps):
+        feed_dict[inputs[i]] = 1.0
+      res = sess.run(outputs, feed_dict)
+      self.assertEqual(steps, len(res))
+      self.assertEqual(2.0, res[-1])
+
   def testFeedDictKeyException(self):
     with session.Session() as sess:
       a = constant_op.constant(1.0, dtypes.float32, name='a')
       with self.assertRaisesRegexp(TypeError, "Cannot interpret feed_dict"):
         sess.run(a, feed_dict={'a': [2.0]})
+
+  def testPerStepTrace(self):
+    run_options = config_pb2.RunOptions(
+        trace_level=config_pb2.RunOptions.FULL_TRACE)
+    run_outputs = config_pb2.RunOutputs()
+
+    with ops.device('/cpu:0'):
+      with session.Session() as sess:
+        sess.run(constant_op.constant(1.0))
+        self.assertTrue(not run_outputs.HasField('step_stats'))
+
+        sess.run(constant_op.constant(1.0), run_outputs=run_outputs)
+        self.assertTrue(not run_outputs.HasField('step_stats'))
+
+        sess.run(constant_op.constant(1.0),
+                 options=run_options,
+                 run_outputs=run_outputs)
+        self.assertTrue(run_outputs.HasField('step_stats'))
+
+        step_stats = step_stats_pb2.StepStats()
+        self.assertEquals(len(step_stats.dev_stats), 0)
+
+        step_stats.CopyFrom(run_outputs.step_stats)
+        self.assertEquals(len(step_stats.dev_stats), 1)
 
 if __name__ == '__main__':
   googletest.main()

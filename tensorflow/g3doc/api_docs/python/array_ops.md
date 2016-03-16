@@ -178,6 +178,28 @@ tf.cast(a, tf.int32) ==> [1, 2]  # dtype=tf.int32
 *  <b>`TypeError`</b>: If `x` cannot be cast to the `dtype`.
 
 
+- - -
+
+### `tf.saturate_cast(value, dtype, name=None)` {#saturate_cast}
+
+Performs a safe saturating cast of `value` to `dtype`.
+
+This function casts the input to `dtype` without applying any scaling.  If
+there is a danger that values would over or underflow in the cast, this op
+applies the appropriate clamping before the cast.
+
+##### Args:
+
+
+*  <b>`value`</b>: A `Tensor`.
+*  <b>`dtype`</b>: The desired output `DType`.
+*  <b>`name`</b>: A name for the operation (optional).
+
+##### Returns:
+
+  `value` safely cast to `dtype`.
+
+
 
 ## Shapes and Shaping
 
@@ -1263,8 +1285,150 @@ boolean_mask(tensor, mask) ==> [[1, 2], [5, 6]]
 ```
 
 
+- - -
+
+### `tf.one_hot(indices, depth, on_value, off_value, axis=None, name=None)` {#one_hot}
+
+Returns a one-hot tensor.
+
+The locations represented by indices in `indices` take value `on_value`,
+while all other locations take value `off_value`.
+
+If the input `indices` is rank `N`, the output will have rank `N+1`,
+The new axis is created at dimension `axis` (default: the new axis is
+appended at the end).
+
+If `indices` is a scalar the output shape will be a vector of length `depth`.
+
+If `indices` is a vector of length `features`, the output shape will be:
+```
+  features x depth if axis == -1
+  depth x features if axis == 0
+```
+
+If `indices` is a matrix (batch) with shape `[batch, features]`,
+the output shape will be:
+```
+  batch x features x depth if axis == -1
+  batch x depth x features if axis == 1
+  depth x batch x features if axis == 0
+```
+
+
+Examples
+=========
+
+Suppose that
+
+```
+  indices = [0, 2, -1, 1]
+  depth = 3
+  on_value = 5.0
+  off_value = 0.0
+  axis = -1
+```
+
+Then output is `[4 x 3]`:
+
+    ```output =
+      [5.0 0.0 0.0]  // one_hot(0)
+      [0.0 0.0 5.0]  // one_hot(2)
+      [0.0 0.0 0.0]  // one_hot(-1)
+      [0.0 5.0 0.0]  // one_hot(1)
+    ```
+
+Suppose that
+
+```
+  indices = [0, 2, -1, 1]
+  depth = 3
+  on_value = 0.0
+  off_value = 3.0
+  axis = 0
+```
+
+Then output is `[3 x 4]`:
+
+    ```output =
+      [0.0 3.0 3.0 3.0]
+      [3.0 3.0 3.0 0.0]
+      [3.0 3.0 3.0 3.0]
+      [3.0 0.0 3.0 3.0]
+    //  ^                one_hot(0)
+    //      ^            one_hot(2)
+    //          ^        one_hot(-1)
+    //              ^    one_hot(1)
+    ```
+Suppose that
+
+```
+  indices = [[0, 2], [1, -1]]
+  depth = 3
+  on_value = 1.0
+  off_value = 0.0
+  axis = -1
+```
+
+Then output is `[2 x 2 x 3]`:
+
+    ```output =
+      [
+        [1.0, 0.0, 0.0]  // one_hot(0)
+        [0.0, 0.0, 1.0]  // one_hot(2)
+      ][
+        [0.0, 1.0, 0.0]  // one_hot(1)
+        [0.0, 0.0, 0.0]  // one_hot(-1)
+      ]```
+
+##### Args:
+
+
+*  <b>`indices`</b>: A `Tensor` of type `int64`. A tensor of indices.
+*  <b>`depth`</b>: A `Tensor` of type `int32`.
+    A scalar defining the depth of the one hot dimension.
+*  <b>`on_value`</b>: A `Tensor`.
+    A scalar defining the value to fill in output when `indices[j] = i`.
+*  <b>`off_value`</b>: A `Tensor`. Must have the same type as `on_value`.
+    A scalar defining the value to fill in output when `indices[j] != i`.
+*  <b>`axis`</b>: An optional `int`. Defaults to `-1`.
+    The axis to fill (default: -1, a new inner-most axis).
+*  <b>`name`</b>: A name for the operation (optional).
+
+##### Returns:
+
+  A `Tensor`. Has the same type as `on_value`. The one-hot tensor.
+
+
 
 ## Other Functions and Classes
+- - -
+
+### `tf.bitcast(input, type, name=None)` {#bitcast}
+
+Bitcasts a tensor from one type to another without copying data.
+
+Given a tensor `input`, this operation returns a tensor that has the same buffer
+data as `input` with datatype `type`.
+
+If the input datatype `T` is larger than the output datatype `type` then the
+shape changes from [...] to [..., sizeof(`T`)/sizeof(`type`)].
+
+If `T` is smaller than `type`, the operator requires that the rightmost
+dimension be equal to sizeof(`type`)/sizeof(`T`). The shape then goes from
+[..., sizeof(`type`)/sizeof(`T`)] to [...].
+
+##### Args:
+
+
+*  <b>`input`</b>: A `Tensor`. Must be one of the following types: `float32`, `float64`, `int64`, `int32`, `uint8`, `uint16`, `int16`, `int8`, `complex64`, `qint8`, `quint8`, `qint32`.
+*  <b>`type`</b>: A `tf.DType` from: `tf.float32, tf.float64, tf.int64, tf.int32, tf.uint8, tf.uint16, tf.int16, tf.int8, tf.complex64, tf.qint8, tf.quint8, tf.qint32`.
+*  <b>`name`</b>: A name for the operation (optional).
+
+##### Returns:
+
+  A `Tensor` of type `type`.
+
+
 - - -
 
 ### `tf.shape_n(input, name=None)` {#shape_n}

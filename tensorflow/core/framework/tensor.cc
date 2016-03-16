@@ -29,6 +29,7 @@ limitations under the License.
 
 #include "tensorflow/core/framework/tensor.h"
 
+#include "tensorflow/core/framework/log_memory.h"
 #include "tensorflow/core/framework/tensor.pb.h"
 #include "tensorflow/core/framework/type_traits.h"
 #include "tensorflow/core/framework/types.h"
@@ -60,6 +61,7 @@ class Buffer : public TensorBuffer {
     int64 rb = size();
     proto->set_requested_bytes(rb);
     proto->set_allocator_name(alloc_->Name());
+    proto->set_ptr(reinterpret_cast<uintptr_t>(data_));
     if (alloc_->TracksAllocationSizes()) {
       int64 ab = alloc_->AllocatedSize(data_);
       proto->set_allocated_bytes(ab);
@@ -214,6 +216,22 @@ struct ProtoHelper<complex64> {
 };
 
 template <>
+struct ProtoHelper<complex128> {
+  typedef Helper<double>::RepeatedFieldType FieldType;
+  static const complex128* Begin(const TensorProto& proto) {
+    return reinterpret_cast<const complex128*>(proto.dcomplex_val().data());
+  }
+  static size_t NumElements(const TensorProto& proto) {
+    return proto.dcomplex_val().size() / 2;
+  }
+  static void Fill(const complex128* data, size_t n, TensorProto* proto) {
+    const double* p = reinterpret_cast<const double*>(data);
+    FieldType copy(p, p + n * 2);
+    proto->mutable_dcomplex_val()->Swap(&copy);
+  }
+};
+
+template <>
 struct ProtoHelper<qint32> {
   typedef Helper<int32>::RepeatedFieldType FieldType;
   static const qint32* Begin(const TensorProto& proto) {
@@ -257,6 +275,10 @@ Buffer<T>::Buffer(Allocator* a, int64 n,
 
 template <typename T>
 Buffer<T>::~Buffer() {
+  if (LogMemory::IsEnabled()) {
+    LogMemory::RecordTensorDeallocation(alloc_->AllocationId(data_),
+                                        alloc_->Name());
+  }
   alloc_->Deallocate<T>(data_, elem_);
 }
 
@@ -379,6 +401,7 @@ void Tensor::UnsafeCopyFromInternal(const Tensor& other,
     CASE(int8, SINGLE_ARG(STMTS))                     \
     CASE(string, SINGLE_ARG(STMTS))                   \
     CASE(complex64, SINGLE_ARG(STMTS))                \
+    CASE(complex128, SINGLE_ARG(STMTS))               \
     CASE(int64, SINGLE_ARG(STMTS))                    \
     CASE(bool, SINGLE_ARG(STMTS))                     \
     CASE(qint32, SINGLE_ARG(STMTS))                   \
@@ -402,6 +425,10 @@ Tensor::Tensor(Allocator* a, DataType type, const TensorShape& shape)
   if (shape_.num_elements() > 0 || a->ShouldAllocateEmptyTensors()) {
     CASES(type, buf_ = new Buffer<T>(a, shape.num_elements()));
   }
+  if (IsInitialized() && LogMemory::IsEnabled()) {
+    LogMemory::RecordTensorAllocation("Unknown", LogMemory::UNKNOWN_STEP_ID,
+                                      *this);
+  }
 }
 
 Tensor::Tensor(Allocator* a, DataType type, const TensorShape& shape,
@@ -411,6 +438,11 @@ Tensor::Tensor(Allocator* a, DataType type, const TensorShape& shape,
   CHECK_NOTNULL(a);
   if (shape_.num_elements() > 0 || a->ShouldAllocateEmptyTensors()) {
     CASES(type, buf_ = new Buffer<T>(a, shape.num_elements(), allocation_attr));
+  }
+  if (!allocation_attr.allocation_will_be_logged && IsInitialized() &&
+      LogMemory::IsEnabled()) {
+    LogMemory::RecordTensorAllocation("Unknown (with attributes)",
+                                      LogMemory::UNKNOWN_STEP_ID, *this);
   }
 }
 
@@ -501,6 +533,11 @@ bool Tensor::FromProto(Allocator* a, const TensorProto& proto) {
   set_dtype(proto.dtype());
   UnrefIfNonNull(buf_);
   buf_ = p;
+  // TODO(misard) add tracking of which kernels and steps are calling FromProto.
+  if (IsInitialized() && LogMemory::IsEnabled()) {
+    LogMemory::RecordTensorAllocation("Unknown (from Proto)",
+                                      LogMemory::UNKNOWN_STEP_ID, *this);
+  }
   return true;
 }
 
@@ -540,6 +577,8 @@ bool Tensor::CanUseDMA() const {
 
 string Tensor::SummarizeValue(int64 max_entries) const {
   string ret;
+  // TODO(irving): Don't call NumElements and flat every time around this
+  // loop.
   for (int64 i = 0; i < std::min(max_entries, NumElements()); ++i) {
     if (i > 0) strings::StrAppend(&ret, " ");
     switch (dtype()) {

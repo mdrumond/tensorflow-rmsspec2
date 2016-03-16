@@ -76,8 +76,13 @@ else:
   def SlowAppendInt64ArrayToTensorProto(tensor_proto, proto_values):
     tensor_proto.int64_val.extend([np.asscalar(x) for x in proto_values])
 
-  def SlowAppendComplexArrayToTensorProto(tensor_proto, proto_values):
+  def SlowAppendComplex64ArrayToTensorProto(tensor_proto, proto_values):
     tensor_proto.scomplex_val.extend([np.asscalar(v)
+                                      for x in proto_values
+                                      for v in [x.real, x.imag]])
+
+  def SlowAppendComplex128ArrayToTensorProto(tensor_proto, proto_values):
+    tensor_proto.dcomplex_val.extend([np.asscalar(v)
                                       for x in proto_values
                                       for v in [x.real, x.imag]])
 
@@ -96,8 +101,8 @@ else:
       np.uint16: SlowAppendIntArrayToTensorProto,
       np.int16: SlowAppendIntArrayToTensorProto,
       np.int8: SlowAppendIntArrayToTensorProto,
-      np.complex64: SlowAppendComplexArrayToTensorProto,
-      np.complex128: SlowAppendComplexArrayToTensorProto,
+      np.complex64: SlowAppendComplex64ArrayToTensorProto,
+      np.complex128: SlowAppendComplex128ArrayToTensorProto,
       np.object: SlowAppendObjectArrayToTensorProto,
       np.bool: SlowAppendBoolArrayToTensorProto,
       dtypes.qint8.as_numpy_dtype: SlowAppendIntArrayToTensorProto,
@@ -240,6 +245,7 @@ _TF_TO_IS_OK = {
     dtypes.int8: _FilterInt,
     dtypes.string: _FilterStr,
     dtypes.complex64: _FilterComplex,
+    dtypes.complex128: _FilterComplex,
     dtypes.int64: _FilterInt,
     dtypes.bool: _FilterBool,
     dtypes.qint32: _FilterInt,
@@ -361,6 +367,9 @@ def make_tensor_proto(values, dtype=None, shape=None):
       tensor_shape=tensor_shape.as_shape(shape).as_proto())
 
   if is_same_size and numpy_dtype in _TENSOR_CONTENT_TYPES and shape_size > 1:
+    if nparray.size * nparray.itemsize >= (1 << 31):
+      raise ValueError(
+          "Cannot create a tensor proto whose content is larger than 2GB.")
     tensor_proto.tensor_content = nparray.tostring()
     return tensor_proto
 
@@ -446,6 +455,15 @@ def MakeNdarray(tensor):
     if len(tensor.scomplex_val) == 2:
       return np.repeat(np.array(complex(tensor.scomplex_val[0],
                                         tensor.scomplex_val[1]), dtype=dtype),
+                       num_elements).reshape(shape)
+    else:
+      return np.array([complex(x[0], x[1]) for x in zip(it, it)],
+                      dtype=dtype).reshape(shape)
+  elif tensor_dtype == dtypes.complex128:
+    it = iter(tensor.dcomplex_val)
+    if len(tensor.dcomplex_val) == 2:
+      return np.repeat(np.array(complex(tensor.dcomplex_val[0],
+                                        tensor.dcomplex_val[1]), dtype=dtype),
                        num_elements).reshape(shape)
     else:
       return np.array([complex(x[0], x[1]) for x in zip(it, it)],

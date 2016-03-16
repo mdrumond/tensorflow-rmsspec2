@@ -155,7 +155,7 @@ class ConstantTest(tf.test.TestCase):
       large_array = np.zeros((512, 1024, 1024), dtype=np.float32)
       with self.assertRaisesRegexp(
           ValueError,
-          "Cannot create an Operation with a NodeDef larger than 2GB."):
+          "Cannot create a tensor proto whose content is larger than 2GB."):
         c = tf.constant(large_array)
 
   def testTooLargeGraph(self):
@@ -327,6 +327,19 @@ class ZerosLikeTest(tf.test.TestCase):
     d = tf.placeholder(tf.float32, shape=[None, 4, None])
     z = tf.zeros_like(d)
     self.assertEqual(d.get_shape().as_list(), z.get_shape().as_list())
+
+  def testZerosLikeDtype(self):
+    # Make sure zeros_like works even for dtypes that cannot be cast between
+    with self.test_session():
+      shape = (3, 5)
+      dtypes = np.float32, np.complex64
+      for in_type in dtypes:
+        x = np.arange(15).astype(in_type).reshape(*shape)
+        for out_type in dtypes:
+          y = tf.zeros_like(x, dtype=out_type).eval()
+          self.assertEqual(y.dtype, out_type)
+          self.assertEqual(y.shape, shape)
+          self.assertAllEqual(y, np.zeros(shape, dtype=out_type))
 
 
 class OnesTest(tf.test.TestCase):

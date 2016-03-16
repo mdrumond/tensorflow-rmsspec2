@@ -43,20 +43,36 @@ class Tensor {
   /// Default Tensor constructor. Creates a 1-dimension, 0-element float tensor.
   Tensor();
 
-  /// \brief Creates a Tensor of the given `type` and `shape`.
+  /// \brief Creates a Tensor of the given `type` and `shape`.  If
+  /// LogMemory::IsEnabled() the allocation is logged as coming from
+  /// an unknown kernel and step. Calling the Tensor constructor
+  /// directly from within an Op is deprecated: use the
+  /// OpKernelConstruction/OpKernelContext allocate_* methods to
+  /// allocate a new tensor, which record the kernel and step.
   ///
   /// The underlying buffer is allocated using a `CPUAllocator`.
   Tensor(DataType type, const TensorShape& shape);
 
-  /// \brief Creates a tensor with the input `type` and `shape`, using the
-  /// allocator `a` to allocate the underlying buffer.
+  /// \brief Creates a tensor with the input `type` and `shape`, using
+  /// the allocator `a` to allocate the underlying buffer. If
+  /// LogMemory::IsEnabled() the allocation is logged as coming from
+  /// an unknown kernel and step. Calling the Tensor constructor
+  /// directly from within an Op is deprecated: use the
+  /// OpKernelConstruction/OpKernelContext allocate_* methods to
+  /// allocate a new tensor, which record the kernel and step.
   ///
   /// `a` must outlive the lifetime of this Tensor.
   Tensor(Allocator* a, DataType type, const TensorShape& shape);
 
-  /// \brief Creates a tensor with the input `type` and `shape`, using the
-  /// allocator `a` and the specified "allocation_attr" to allocate the
-  /// underlying buffer.
+  /// \brief Creates a tensor with the input `type` and `shape`, using
+  /// the allocator `a` and the specified "allocation_attr" to
+  /// allocate the underlying buffer. If the kernel and step are known
+  /// allocation_attr.allocation_will_be_logged should be set to true
+  /// and LogMemory::RecordTensorAllocation should be called after the
+  /// tensor is constructed. Calling the Tensor constructor directly
+  /// from within an Op is deprecated: use the
+  /// OpKernelConstruction/OpKernelContext allocate_* methods to
+  /// allocate a new tensor, which record the kernel and step.
   ///
   /// `a` must outlive the lifetime of this Tensor.
   Tensor(Allocator* a, DataType type, const TensorShape& shape,
@@ -103,6 +119,16 @@ class Tensor {
 
   /// Returns the estimated memory usage of this tensor.
   size_t TotalBytes() const;
+
+  /// Returns true iff this tensor is aligned.
+  bool IsAligned() const {
+#if EIGEN_ALIGN == 1
+    void* ptr = base<void>();
+    return reinterpret_cast<intptr_t>(ptr) % EIGEN_MAX_ALIGN_BYTES == 0;
+#else
+    return true;
+#endif
+  }
 
   /// Assign operator. This tensor shares other's underlying storage.
   Tensor& operator=(const Tensor& other) {
@@ -217,9 +243,7 @@ class Tensor {
   ///
   /// ```
   template <typename T>
-  typename TTypes<T>::Flat flat() {
-    return shaped<T, 1>({NumElements()});
-  }
+  typename TTypes<T>::Flat flat();
 
   template <typename T>
   typename TTypes<T>::UnalignedFlat unaligned_flat() {
@@ -284,9 +308,7 @@ class Tensor {
   typename TTypes<T, NDIMS>::ConstTensor tensor() const;
 
   template <typename T>
-  typename TTypes<T>::ConstFlat flat() const {
-    return shaped<T, 1>({NumElements()});
-  }
+  typename TTypes<T>::ConstFlat flat() const;
 
   template <typename T>
   typename TTypes<T>::UnalignedConstFlat unaligned_flat() const {
@@ -306,16 +328,7 @@ class Tensor {
   }
 
   template <typename T>
-  typename TTypes<T>::ConstMatrix flat_outer_dims() const {
-    int64 first_size = dims() > 0 ? dim_size(0) : 1;
-    if (first_size == 0) {
-      DCHECK_EQ(NumElements(), 0);
-      // Return something empty, avoiding divide by 0
-      return shaped<T, 2>({0, 0});
-    } else {
-      return shaped<T, 2>({first_size, NumElements() / first_size});
-    }
-  }
+  typename TTypes<T>::ConstMatrix flat_outer_dims() const;
 
   template <typename T, size_t NDIMS>
   typename TTypes<T, NDIMS>::ConstTensor shaped(
@@ -388,6 +401,11 @@ class Tensor {
 
   template <typename T>
   T* base() const;
+
+  template <size_t NDIMS>
+  void FillDimsAndValidateCompatibleShape(
+      Eigen::array<Eigen::DenseIndex, NDIMS>* dims,
+      gtl::ArraySlice<int64> new_sizes) const;
 };
 
 // Implementation details
@@ -415,12 +433,6 @@ class TensorBuffer : public core::RefCounted {
   }
 };
 
-inline void CheckEigenAlignment(const void* ptr) {
-#if EIGEN_ALIGN == 1
-  CHECK_EQ(reinterpret_cast<intptr_t>(ptr) % EIGEN_ALIGN_BYTES, 0);
-#endif
-}
-
 template <typename T>
 T* Tensor::base() const {
   return buf_ == nullptr ? nullptr : buf_->base<T>();
@@ -429,14 +441,14 @@ T* Tensor::base() const {
 template <typename T, size_t NDIMS>
 typename TTypes<T, NDIMS>::Tensor Tensor::tensor() {
   CHECK_EQ(dtype(), DataTypeToEnum<T>::v());
-  CheckEigenAlignment(base<T>());
+  CHECK(IsAligned());
   return typename TTypes<T, NDIMS>::Tensor(base<T>(),
                                            shape().AsEigenDSizes<NDIMS>());
 }
 
 template <typename T, size_t NDIMS>
 typename TTypes<T, NDIMS>::ConstTensor Tensor::tensor() const {
-  CheckEigenAlignment(base<T>());
+  CHECK(IsAligned());
   CHECK_EQ(dtype(), DataTypeToEnum<T>::v());
   return typename TTypes<T, NDIMS>::ConstTensor(base<const T>(),
                                                 shape().AsEigenDSizes<NDIMS>());
@@ -445,7 +457,7 @@ typename TTypes<T, NDIMS>::ConstTensor Tensor::tensor() const {
 template <typename T, size_t NDIMS>
 typename TTypes<T, NDIMS>::Tensor Tensor::shaped(
     gtl::ArraySlice<int64> new_sizes) {
-  CheckEigenAlignment(base<T>());
+  CHECK(IsAligned());
   CHECK_EQ(dtype(), DataTypeToEnum<T>::v());
   CHECK_EQ(NDIMS, new_sizes.size());
   int64 new_num_elements = 1;
@@ -473,19 +485,26 @@ typename TTypes<T, NDIMS>::UnalignedTensor Tensor::unaligned_shaped(
   return typename TTypes<T, NDIMS>::UnalignedTensor(base<T>(), dims);
 }
 
+template <size_t NDIMS>
+void Tensor::FillDimsAndValidateCompatibleShape(
+    Eigen::array<Eigen::DenseIndex, NDIMS>* dims,
+    gtl::ArraySlice<int64> new_sizes) const {
+  CHECK_EQ(NDIMS, new_sizes.size());
+  int64 new_num_elements = 1;
+  for (size_t d = 0; d < NDIMS; d++) {
+    new_num_elements *= new_sizes[d];
+    (*dims)[d] = new_sizes[d];
+  }
+  CHECK_EQ(new_num_elements, NumElements());
+}
+
 template <typename T, size_t NDIMS>
 typename TTypes<T, NDIMS>::ConstTensor Tensor::shaped(
     gtl::ArraySlice<int64> new_sizes) const {
-  CheckEigenAlignment(base<T>());
+  CHECK(IsAligned());
   CHECK_EQ(dtype(), DataTypeToEnum<T>::v());
-  CHECK_EQ(NDIMS, new_sizes.size());
-  int64 new_num_elements = 1;
   Eigen::array<Eigen::DenseIndex, NDIMS> dims;
-  for (size_t d = 0; d < NDIMS; d++) {
-    new_num_elements *= new_sizes[d];
-    dims[d] = new_sizes[d];
-  }
-  CHECK_EQ(new_num_elements, NumElements());
+  FillDimsAndValidateCompatibleShape(&dims, new_sizes);
   return typename TTypes<T, NDIMS>::ConstTensor(base<T>(), dims);
 }
 
@@ -493,29 +512,45 @@ template <typename T, size_t NDIMS>
 typename TTypes<T, NDIMS>::UnalignedConstTensor Tensor::unaligned_shaped(
     gtl::ArraySlice<int64> new_sizes) const {
   CHECK_EQ(dtype(), DataTypeToEnum<T>::v());
-  CHECK_EQ(NDIMS, new_sizes.size());
-  int64 new_num_elements = 1;
   Eigen::array<Eigen::DenseIndex, NDIMS> dims;
-  for (size_t d = 0; d < NDIMS; d++) {
-    new_num_elements *= new_sizes[d];
-    dims[d] = new_sizes[d];
-  }
-  CHECK_EQ(new_num_elements, NumElements());
+  FillDimsAndValidateCompatibleShape(&dims, new_sizes);
   return typename TTypes<T, NDIMS>::UnalignedConstTensor(base<T>(), dims);
 }
 
 template <typename T>
 typename TTypes<T>::Scalar Tensor::scalar() {
-  CheckEigenAlignment(base<T>());
+  CHECK(IsAligned());
   CHECK_EQ(1, NumElements()) << "Must have a one element tensor";
   return typename TTypes<T>::Scalar(base<T>());
 }
 
 template <typename T>
 typename TTypes<T>::ConstScalar Tensor::scalar() const {
-  CheckEigenAlignment(base<T>());
+  CHECK(IsAligned());
   CHECK_EQ(1, NumElements()) << "Must have a one element tensor";
   return typename TTypes<T>::ConstScalar(base<T>());
+}
+
+template <typename T>
+typename TTypes<T>::Flat Tensor::flat() {
+  return shaped<T, 1>({NumElements()});
+}
+
+template <typename T>
+typename TTypes<T>::ConstFlat Tensor::flat() const {
+  return shaped<T, 1>({NumElements()});
+}
+
+template <typename T>
+typename TTypes<T>::ConstMatrix Tensor::flat_outer_dims() const {
+  int64 first_size = dims() > 0 ? dim_size(0) : 1;
+  if (first_size == 0) {
+    DCHECK_EQ(NumElements(), 0);
+    // Return something empty, avoiding divide by 0
+    return shaped<T, 2>({0, 0});
+  } else {
+    return shaped<T, 2>({first_size, NumElements() / first_size});
+  }
 }
 
 }  // namespace tensorflow

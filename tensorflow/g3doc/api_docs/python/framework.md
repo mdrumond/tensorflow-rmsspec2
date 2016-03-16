@@ -523,7 +523,7 @@ This method may be called concurrently from multiple threads.
 
 - - -
 
-#### `tf.Graph.unique_name(name)` {#Graph.unique_name}
+#### `tf.Graph.unique_name(name, mark_as_used=True)` {#Graph.unique_name}
 
 Return a unique operation name for `name`.
 
@@ -537,10 +537,17 @@ Operation names are displayed in error messages reported by the
 TensorFlow runtime, and in various visualization tools such as
 TensorBoard.
 
+If `mark_as_used` is set to `True`, which is the default, a new
+unique name is created and marked as in use. If it's set to `False`,
+the unique name is returned without actually being marked as used.
+This is useful when the caller simply wants to know what the name
+to be created will be.
+
 ##### Args:
 
 
 *  <b>`name`</b>: The name for an operation.
+*  <b>`mark_as_used`</b>: Whether to mark this name as being used.
 
 ##### Returns:
 
@@ -613,6 +620,7 @@ the default graph.
 
 
 *  <b>`TypeError`</b>: if any of the inputs is not a `Tensor`.
+*  <b>`ValueError`</b>: if colocation conflicts with existing device assignment.
 
 ##### Returns:
 
@@ -632,7 +640,7 @@ For example:
 
 ```python
 @tf.RegisterGradient("CustomSquare")
-def _custom_square_grad(op, inputs):
+def _custom_square_grad(op, grad):
   # ...
 
 with tf.Graph().as_default() as g:
@@ -680,6 +688,45 @@ a collection several times. This function makes sure that duplicates in
 *  <b>`names`</b>: The keys for the collections to add to. The `GraphKeys` class
     contains many standard names for collections.
 *  <b>`value`</b>: The value to add to the collections.
+
+
+- - -
+
+#### `tf.Graph.colocate_with(op, ignore_existing=False)` {#Graph.colocate_with}
+
+Returns a context manager that specifies an op to colocate with.
+
+Note: this function is not for public use, only for internal libraries.
+
+For example:
+
+```python
+a = tf.Variable([1.0])
+with g.colocate_with(a):
+  b = tf.constant(1.0)
+  c = tf.add(a, b)
+```
+
+`b` and `c` will always be colocated with `a`, no matter where `a`
+is eventually placed.
+
+##### Args:
+
+
+*  <b>`op`</b>: The op to colocate all created ops with.
+*  <b>`ignore_existing`</b>: If true, only applies colocation of this op within
+    the context, rather than applying all colocation properties
+    on the stack.
+
+##### Raises:
+
+
+*  <b>`ValueError`</b>: if op is None.
+
+##### Yields:
+
+  A context manager that specifies the op with which to colocate
+  newly created ops.
 
 
 - - -
@@ -877,6 +924,13 @@ regular expression:
     or if `inputs` are not tensors,
     or if `inputs` and `input_types` are incompatible.
 *  <b>`ValueError`</b>: if the `node_def` name is not valid.
+
+
+- - -
+
+#### `tf.Operation.colocation_groups()` {#Operation.colocation_groups}
+
+Returns the list of colocation groups of the op.
 
 
 - - -
@@ -1227,6 +1281,13 @@ Returns a non-reference `DType` based on this `DType`.
 
 - - -
 
+#### `tf.DType.real_dtype` {#DType.real_dtype}
+
+Returns the dtype correspond to this dtype's real part.
+
+
+- - -
+
 #### `tf.DType.is_ref_dtype` {#DType.is_ref_dtype}
 
 Returns `True` if this `DType` represents a reference type.
@@ -1244,6 +1305,13 @@ Returns a reference `DType` based on this `DType`.
 #### `tf.DType.is_floating` {#DType.is_floating}
 
 Returns whether this is a (real) floating point type.
+
+
+- - -
+
+#### `tf.DType.is_complex` {#DType.is_complex}
+
+Returns whether this is a complex floating point type.
 
 
 - - -
@@ -1336,6 +1404,13 @@ Returns the minimum representable value in this data type.
 *  <b>`TypeError`</b>: if this is a non-numeric, unordered, or quantized type.
 
 
+- - -
+
+#### `tf.DType.size` {#DType.size}
+
+
+
+
 
 - - -
 
@@ -1366,7 +1441,7 @@ Converts the given `type_value` to a `DType`.
 
 - - -
 
-### `tf.device(dev)` {#device}
+### `tf.device(device_name_or_function)` {#device}
 
 Wrapper for `Graph.device()` using the default graph.
 

@@ -52,7 +52,7 @@ def assign_moving_average(variable, value, decay, name=None):
     moving average.
   """
   with ops.op_scope([variable, value, decay], name, "AssignMovingAvg") as scope:
-    with ops.device(variable.device):
+    with ops.colocate_with(variable):
       decay = ops.convert_to_tensor(1.0 - decay, name="decay")
       if decay.dtype != variable.dtype.base_dtype:
         decay = math_ops.cast(decay, variable.dtype.base_dtype)
@@ -269,12 +269,14 @@ class ExponentialMovingAverage(object):
           avg = slot_creator.create_slot(
               var, var.initialized_value(), self._name,
               colocate_with_primary=True)
+          # NOTE(mrry): We only add `tf.Variable` objects to the
+          # `MOVING_AVERAGE_VARIABLES` collection.
+          ops.add_to_collection(ops.GraphKeys.MOVING_AVERAGE_VARIABLES, var)
         else:
           avg = slot_creator.create_zeros_slot(
               var, self._name,
               colocate_with_primary=(var.op.type == "Variable"))
       self._averages[var] = avg
-      ops.add_to_collection(ops.GraphKeys.MOVING_AVERAGE_VARIABLES, var)
 
     with ops.name_scope(self._name) as scope:
       decay = ops.convert_to_tensor(self._decay, name="decay")

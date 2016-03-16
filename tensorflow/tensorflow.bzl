@@ -13,11 +13,11 @@ def tf_android_core_proto_sources():
         "//tensorflow/core:example/feature.proto",
         "//tensorflow/core:framework/allocation_description.proto",
         "//tensorflow/core:framework/attr_value.proto",
-        "//tensorflow/core:framework/config.proto",
         "//tensorflow/core:framework/device_attributes.proto",
         "//tensorflow/core:framework/function.proto",
         "//tensorflow/core:framework/graph.proto",
         "//tensorflow/core:framework/kernel_def.proto",
+        "//tensorflow/core:framework/log_memory.proto",
         "//tensorflow/core:framework/op_def.proto",
         "//tensorflow/core:framework/step_stats.proto",
         "//tensorflow/core:framework/summary.proto",
@@ -28,9 +28,10 @@ def tf_android_core_proto_sources():
         "//tensorflow/core:framework/types.proto",
         "//tensorflow/core:framework/versions.proto",
         "//tensorflow/core:lib/core/error_codes.proto",
+        "//tensorflow/core:protobuf/config.proto",
         "//tensorflow/core:protobuf/saver.proto",
-        "//tensorflow/core:util/saved_tensor_slice.proto"
-	]
+        "//tensorflow/core:util/saved_tensor_slice.proto",
+  ]
 
 
 def if_cuda(a, b=[]):
@@ -185,14 +186,14 @@ def tf_cc_tests(tests, deps, linkstatic=0, tags=[]):
 
 # Build defs for TensorFlow kernels
 
-
 # When this target is built using --config=cuda, a cc_library is built
 # that passes -DGOOGLE_CUDA=1 and '-x cuda', linking in additional
 # libraries needed by GPU kernels.
 def tf_gpu_kernel_library(srcs, copts=[], cuda_copts=[], deps=[], hdrs=[],
-                       **kwargs):
+                          **kwargs):
   cuda_copts = ["-x", "cuda", "-DGOOGLE_CUDA=1",
-                "-nvcc_options=relaxed-constexpr"] + cuda_copts
+                "-nvcc_options=relaxed-constexpr", "-nvcc_options=ftz=true",
+                "--gcudacc_flag=-ftz=true"] + cuda_copts
   native.cc_library(
       srcs = srcs,
       hdrs = hdrs,
@@ -202,7 +203,6 @@ def tf_gpu_kernel_library(srcs, copts=[], cuda_copts=[], deps=[], hdrs=[],
       ]) + ["//tensorflow/core/platform/default/build_config:cuda_runtime_extra"],
       alwayslink=1,
       **kwargs)
-
 
 def tf_cuda_library(deps=None, cuda_deps=None, copts=None, **kwargs):
   """Generate a cc_library with a conditional set of CUDA dependencies.
@@ -232,6 +232,73 @@ def tf_cuda_library(deps=None, cuda_deps=None, copts=None, **kwargs):
           ["//tensorflow/core/platform/default/build_config:cuda_runtime_extra"],
       copts = copts + if_cuda(["-DGOOGLE_CUDA=1"]),
       **kwargs)
+
+
+def tf_kernel_library(name, prefix=None, srcs=None, gpu_srcs=None, hdrs=None,
+                      deps=None, alwayslink=1, **kwargs):
+  """A rule to build a TensorFlow OpKernel.
+
+  May either specify srcs/hdrs or prefix.  Similar to tf_cuda_library,
+  but with alwayslink=1 by default.  If prefix is specified:
+    * prefix*.cc (except *.cu.cc) is added to srcs
+    * prefix*.h (except *.cu.h) is added to hdrs
+    * prefix*.cu.cc and prefix*.h (including *.cu.h) are added to gpu_srcs.
+  With the exception that test files are excluded.
+  For example, with prefix = "cast_op",
+    * srcs = ["cast_op.cc"]
+    * hdrs = ["cast_op.h"]
+    * gpu_srcs = ["cast_op_gpu.cu.cc", "cast_op.h"]
+    * "cast_op_test.cc" is excluded
+  With prefix = "cwise_op"
+    * srcs = ["cwise_op_abs.cc", ..., "cwise_op_tanh.cc"],
+    * hdrs = ["cwise_ops.h", "cwise_ops_common.h"],
+    * gpu_srcs = ["cwise_op_gpu_abs.cu.cc", ..., "cwise_op_gpu_tanh.cu.cc",
+                  "cwise_ops.h", "cwise_ops_common.h", "cwise_ops_gpu_common.cu.h"]
+    * "cwise_ops_test.cc" is excluded
+  """
+  if not srcs:
+    srcs = []
+  if not hdrs:
+    hdrs = []
+  if not deps:
+    deps = []
+  gpu_deps = deps + ["//tensorflow/core:cuda"]
+
+  if prefix:
+    if native.glob([prefix + "*.cu.cc"], exclude = ["*test*"]):
+      if not gpu_srcs:
+        gpu_srcs = []
+      gpu_srcs = gpu_srcs + native.glob([prefix + "*.cu.cc", prefix + "*.h"],
+                                        exclude = ["*test*"])
+    srcs = srcs + native.glob([prefix + "*.cc"],
+                              exclude = ["*test*", "*.cu.cc"])
+    hdrs = hdrs + native.glob([prefix + "*.h"], exclude = ["*test*", "*.cu.h"])
+
+  cuda_deps = ["//tensorflow/core:gpu_lib"]
+  if gpu_srcs:
+    tf_gpu_kernel_library(
+        name = name + "_gpu",
+        srcs = gpu_srcs,
+        deps = gpu_deps,
+        **kwargs)
+    cuda_deps.extend([":" + name + "_gpu"])
+  tf_cuda_library(
+      name = name,
+      srcs = srcs,
+      hdrs = hdrs,
+      copts = tf_copts(),
+      cuda_deps = cuda_deps,
+      linkstatic = 1,   # Needed since alwayslink is broken in bazel b/27630669
+      alwayslink = alwayslink,
+      deps = deps,
+      **kwargs)
+
+
+def tf_kernel_libraries(name, prefixes, deps=None, **kwargs):
+  """Makes one target per prefix, and one target that includes them all."""
+  for p in prefixes:
+    tf_kernel_library(name=p, prefix=p, deps=deps, **kwargs)
+  native.cc_library(name=name, deps=[":" + p for p in prefixes])
 
 
 # Bazel rules for building swig files.
@@ -311,6 +378,55 @@ def transitive_hdrs(name, deps=[], **kwargs):
   native.filegroup(name=name,
                    srcs=[":" + name + "_gather"])
 
+
+# Create a header only library that includes all the headers exported by
+# the libraries in deps.
+def cc_header_only_library(name, deps=[], **kwargs):
+  _transitive_hdrs(name=name + "_gather",
+                   deps=deps)
+  native.cc_library(name=name,
+                    hdrs=[":" + name + "_gather"],
+                    **kwargs)
+
+
+# Helper to build a dynamic library (.so) from the sources containing
+# implementations of custom ops and kernels.
+def tf_custom_op_library(name, srcs=[], gpu_srcs=[], deps=[]):
+  cuda_deps = [
+      "//tensorflow/core:stream_executor_headers_lib",
+      "//tensorflow/core/platform/default/build_config:cuda",
+  ]
+  deps = deps + [
+      "//third_party/eigen3",
+      "//tensorflow/core:framework_headers_lib",
+  ]
+  if gpu_srcs:
+    basename = name.split(".")[0]
+    cuda_copts = ["-x", "cuda", "-DGOOGLE_CUDA=1",
+                  "-nvcc_options=relaxed-constexpr", "-nvcc_options=ftz=true",
+                  "--gcudacc_flag=-ftz=true"]
+
+    native.cc_library(
+        name = basename + "_gpu",
+        srcs = gpu_srcs,
+        copts = if_cuda(cuda_copts),
+        deps = deps + if_cuda(cuda_deps))
+    cuda_deps.extend([":" + basename + "_gpu"])
+
+  native.cc_binary(name=name,
+                   srcs=srcs,
+                   deps=deps + if_cuda(cuda_deps),
+                   linkshared=1,
+                   linkopts = select({
+                       "//conditions:default": [
+                           "-Wl,-Bsymbolic",
+                           "-lm",
+                       ],
+                       "//tensorflow:darwin": [],
+                   }),
+  )
+
+
 def tf_extension_linkopts():
   return []  # No extension link opts
 
@@ -344,6 +460,36 @@ def tf_py_wrap_cc(name, srcs, swig_includes=[], deps=[], copts=[], **kwargs):
                     data=[":" + cc_library_name])
 
 
+def tf_py_test(name, srcs, data=[], main=None, args=[],
+               tags=[], shard_count=1, additional_deps=[]):
+  native.py_test(
+      name=name,
+      srcs=srcs,
+      main=main,
+      args=args,
+      tags=tags,
+      visibility=["//tensorflow:internal"],
+      shard_count=shard_count,
+      data=data,
+      deps=[
+          "//tensorflow/python:extra_py_tests_deps",
+          "//tensorflow/python:kernel_tests/gradient_checker",
+      ] + additional_deps,
+      srcs_version="PY2AND3")
+
+
+def cuda_py_test(name, srcs, data=[], main="", args=[],
+                 shard_count=1, additional_deps=[]):
+  test_tags = tf_cuda_tests_tags()
+  tf_py_test(name=name,
+             srcs=srcs,
+             data=data,
+             main=main,
+             args=args,
+             tags=test_tags,
+             shard_count=shard_count,
+             additional_deps=additional_deps)
+
 def py_tests(name,
              srcs,
              additional_deps=[],
@@ -355,20 +501,16 @@ def py_tests(name,
     test_name = src.split("/")[-1].split(".")[0]
     if prefix:
       test_name = "%s_%s" % (prefix, test_name)
-    native.py_test(name=test_name,
-                   srcs=[src],
-                   main=src,
-                   tags=tags,
-                   visibility=["//tensorflow:internal"],
-                   shard_count=shard_count,
-                   data=data,
-                   deps=[
-                       "//tensorflow/python:extra_py_tests_deps",
-                       "//tensorflow/python:kernel_tests/gradient_checker",
-                   ] + additional_deps,
-                   srcs_version="PY2AND3")
+      tf_py_test(name=test_name,
+                 srcs=[src],
+                 main=src,
+                 tags=tags,
+                 shard_count=shard_count,
+                 data=data,
+                 additional_deps=additional_deps)
 
 
 def cuda_py_tests(name, srcs, additional_deps=[], data=[], shard_count=1):
   test_tags = tf_cuda_tests_tags()
-  py_tests(name, srcs, additional_deps, data, test_tags, shard_count)
+  py_tests(name=name, srcs=srcs, additional_deps=additional_deps, data=data,
+           tags=test_tags, shard_count=shard_count)

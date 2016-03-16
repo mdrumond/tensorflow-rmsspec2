@@ -50,9 +50,12 @@ mathematical functions to your graph.
 @@minimum
 @@cos
 @@sin
+@@lbeta
 @@lgamma
+@@digamma
 @@erf
 @@erfc
+@@squared_difference
 
 ## Matrix Math Functions
 
@@ -60,6 +63,8 @@ TensorFlow provides several operations that you can use to add basic
 mathematical functions for matrices to your graph.
 
 @@diag
+@@diag_part
+@@trace
 @@transpose
 
 @@matmul
@@ -918,6 +923,39 @@ def reduce_any(input_tensor, reduction_indices=None, keep_dims=False,
                            keep_dims, name=name)
 
 
+def trace(x, name=None):
+  """ Compute the trace of a tensor `x`.
+
+  `trace(x)` returns the sum of along the diagonal.
+  
+  For example:
+
+  ```python
+  # 'x' is [[1, 1],
+  #         [1, 1]]
+  tf.trace(x) ==> 2
+  
+  # 'x' is [[1,2,3],
+  #         [4,5,6],
+  #         [7,8,9]]
+  tf.trace(x) ==> 15
+  ```
+
+  Args:
+    input_tensor: 2-D tensor.
+    name: A name for the operation (optional).
+
+  Returns:
+    The trace of input tensor.
+  """
+  with ops.op_scope([x], name, "Trace") as name: 
+    x = ops.convert_to_tensor(x, name="x")
+    if len(x.get_shape()) != 2:
+      raise ValueError("Expected a tensor with rank 2, rank %d tensor received"
+                       % len(x.get_shape()))
+    return reduce_sum(array_ops.diag_part(x), name=name)
+
+
 def matmul(a, b,
            transpose_a=False, transpose_b=False,
            a_is_sparse=False, b_is_sparse=False,
@@ -1196,12 +1234,43 @@ def tanh(x, name=None):
     return gen_math_ops._tanh(x, name=name)
 
 
+# TODO(b/27419586) Change docstring for required dtype of x once int allowed
+def lbeta(x, name="lbeta"):
+  """Computes `ln(|Beta(x)|)`, reducing along the last dimension.
+
+  Given one-dimensional `z = [z_0,...,z_{K-1}]`, we define
+
+  ```Beta(z) = \prod_j Gamma(z_j) / Gamma(\sum_j z_j)```
+
+  , and for `n + 1` dimensional `x` with shape `[N1, ..., Nn, K]`, we define
+  `lbeta(x)[i1, ..., in] = Log(|Beta(x[i1, ..., in, :])|)`.  In other words,
+  the last dimension is treated as the `z` vector.
+
+  Note that if `z = [u, v]`, then
+  `Beta(z) = int_0^1 t^{u-1} (1 - t)^{v-1} dt`, which defines the traditional
+  bivariate beta function.
+
+  Args:
+    x: A rank `n + 1` `Tensor` with type `float`, or `double`.
+    name: A name for the operation (optional).
+
+  Returns:
+    The logarithm of `|Beta(x)|` reducing along the last dimension.
+  """
+  with ops.op_scope([x], name):
+    x = ops.convert_to_tensor(x, name="x")
+    ndims = array_ops.size(array_ops.shape(x))
+    return (reduce_sum(
+        lgamma(x), reduction_indices=ndims - 1)
+            - lgamma(reduce_sum(x, reduction_indices=ndims - 1)))
+
+
+# TODO(b/27419586) Change docstring for required dtype of x once int allowed
 def lgamma(x, name=None):
   """Computes `ln(|gamma(x)|)` element-wise.
 
   Args:
-    x: A Tensor with type `float`, `double`, `int32`, `int64`,
-      or `qint32`.
+    x: A Tensor with type `float`, or `double`.
     name: A name for the operation (optional).
 
   Returns:
@@ -1211,6 +1280,23 @@ def lgamma(x, name=None):
   with ops.op_scope([x], name, "Lgamma") as name:
     x = ops.convert_to_tensor(x, name="x")
     return gen_math_ops._lgamma(x, name=name)
+
+
+# TODO(b/27419586) Change docstring for required dtype of x once int allowed
+def digamma(x, name=None):
+  """Computes Psi, the derivative of lgamma, `ln(|gamma(x)|)`, element-wise.
+
+  Args:
+    x: A Tensor with type `float`, or `double`.
+    name: A name for the operation (optional).
+
+  Returns:
+    A Tensor with the same type as `x` if `x.dtype != qint32` otherwise
+      the return type is `quint8`.
+  """
+  with ops.op_scope([x], name, "Digamma") as name:
+    x = ops.convert_to_tensor(x, name="x")
+    return gen_math_ops._digamma(x, name=name)
 
 
 def erf(x, name=None):
@@ -1271,6 +1357,7 @@ ops.RegisterShape("Square")(common_shapes.unchanged_shape)
 ops.RegisterShape("Sigmoid")(common_shapes.unchanged_shape)
 ops.RegisterShape("Tanh")(common_shapes.unchanged_shape)
 ops.RegisterShape("Lgamma")(common_shapes.unchanged_shape)
+ops.RegisterShape("Digamma")(common_shapes.unchanged_shape)
 ops.RegisterShape("Erf")(common_shapes.unchanged_shape)
 ops.RegisterShape("Erfc")(common_shapes.unchanged_shape)
 ops.RegisterShape("Cast")(common_shapes.unchanged_shape)
@@ -1296,6 +1383,7 @@ ops.RegisterShape("IFFT2D")(common_shapes.unchanged_shape)
 @ops.RegisterShape("NotEqual")
 @ops.RegisterShape("Pow")
 @ops.RegisterShape("Sub")
+@ops.RegisterShape("SquaredDifference")
 def _BroadcastShape(op):
   """Common shape function for binary operators that broadcast their inputs."""
   shape_x = op.inputs[0].get_shape()
