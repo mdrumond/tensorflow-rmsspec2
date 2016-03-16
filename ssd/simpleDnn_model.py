@@ -31,7 +31,7 @@ def NLLCriterion(inA, labels):
     indices = tf.expand_dims(tf.range(0, batch_size), 1)
     concated = tf.concat(1, [indices, labels])
     onehot_labels = tf.sparse_to_dense(
-        concated, tf.pack([batch_size, 3]), 1.0, 0.0)
+        concated, tf.pack([batch_size, NUM_CLASSES]), 1.0, 0.0)
     return - tf.reduce_sum(tf.mul(inA, onehot_labels), reduction_indices=1)
 
 
@@ -43,7 +43,7 @@ def inference(images):
     # Hidden 1
     with tf.name_scope('hidden1'):
         weights = tf.Variable(
-            tf.truncated_normal([IMAGES_PIXELS, LAYER_SIZE],
+            tf.truncated_normal([IMAGE_PIXELS, LAYER_SIZE],
                                 stddev= 1.0 / math.sqrt(float(IMAGE_PIXELS))),
         name='weights')
         biases = tf.Variable(tf.zeros([LAYER_SIZE]),
@@ -58,7 +58,7 @@ def inference(images):
             name='weights')
         biases = tf.Variable(tf.zeros([NUM_CLASSES]),
                              name='biases')
-        logits = logSoftMax(tf.matmul(hidden2, weights) + biases)
+        logits = logSoftMax(tf.matmul(hidden1, weights) + biases)
         return logits
     
     
@@ -71,37 +71,38 @@ def loss(logits, labels):
 
       Returns:
       loss: NLL criterion Loss tensor of type float.
-  """
-      return NLLCriterion(logits,labels)
+      """
+      loss = tf.reduce_mean(NLLCriterion(logits,labels), name='nll_mean')
+      return loss
 
 
-  def trainingSGD(loss, learning_rate):
-      """Sets up the training Ops.
-      
-      Creates a summarizer to track the loss over time in TensorBoard.
-      
-      Creates an optimizer and applies the gradients to all trainable variables.
-
-      The Op returned by this function is what must be passed to the
-      `sess.run()` call to cause the model to train.
-
-      Args:
-        loss: Loss tensor, from loss().
-        learning_rate: The learning rate to use for gradient descent.
-
-      Returns:
-        train_op: The Op for training.
-  """
-      # Add a scalar summary for the snapshot loss.
-      tf.scalar_summary(loss.op.name, loss)
-      # Create the gradient descent optimizer with the given learning rate.
-      optimizer = tf.train.GradientDescentOptimizer(learning_rate)
-      # Create a variable to track the global step.
-      global_step = tf.Variable(0, name='global_step', trainable=False)
-      # Use the optimizer to apply the gradients that minimize the loss
-      # (and also increment the global step counter) as a single training step.
-      train_op = optimizer.minimize(loss, global_step=global_step)
-      return train_op
+def training_SGD(loss, learning_rate):
+    """Sets up the training Ops.
+    
+    Creates a summarizer to track the loss over time in TensorBoard.
+    
+    Creates an optimizer and applies the gradients to all trainable variables.
+    
+    The Op returned by this function is what must be passed to the
+    `sess.run()` call to cause the model to train.
+    
+    Args:
+    loss: Loss tensor, from loss().
+    learning_rate: The learning rate to use for gradient descent.
+    
+    Returns:
+    train_op: The Op for training.
+    """
+    # Add a scalar summary for the snapshot loss.
+    tf.scalar_summary(loss.op.name, loss)
+    # Create the gradient descent optimizer with the given learning rate.
+    optimizer = tf.train.GradientDescentOptimizer(learning_rate)
+    # Create a variable to track the global step.
+    global_step = tf.Variable(0, name='global_step', trainable=False)
+    # Use the optimizer to apply the gradients that minimize the loss
+    # (and also increment the global step counter) as a single training step.
+    train_op = optimizer.minimize(loss, global_step=global_step)
+    return train_op
 
 
 
