@@ -180,8 +180,35 @@ def test_tensorboard(_):
             sess.run(train_step, feed_dict=feed)
 
 
+def test_matrix_comp():
+    def getTestMatrix():
+        return np.random.randn(3, 3) + 1j*np.random.randn(3, 3)
+
+    def numpyTestSvd(test_in):
+        U, s, V = np.linalg.svd(test_in, full_matrices=True)
+        print("### SVD Test:")
+        print("U")
+        print(U)
+        print("s")
+        print(s)
+        print("V")
+        print(V)
+
+    def numpyTestSvdS(test_in):
+        U, s, V = np.linalg.svd(test_in, full_matrices=True)
+        return s
+
+    def numpyTestQr(test_in):
+        q,r = np.linalg.qr(test_in,mode='complete')
+        print("### QR Test")
+        print("q")
+        print(q)
+        print("r")
+        print(r)
+    tf_ans = tf.matrix_decomp_svd_s(test_in)
+
 def main(_):
-    test_NNLCriterion()
-    
+    test_matrix_comp()
+
 if __name__ == '__main__':
     tf.app.run()

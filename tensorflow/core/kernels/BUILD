@@ -586,6 +586,7 @@ tf_kernel_libraries(
         "matrix_solve_ls_op",
         "matrix_solve_op",
         "matrix_triangular_solve_op",
+        "matrix_decomp",
     ],
     deps = [
         ":binary_linalg_ops_common",
@@ -619,6 +620,7 @@ cc_library(
         "//third_party/eigen3",
     ],
 )
+
 
 tf_kernel_libraries(
     name = "logging",

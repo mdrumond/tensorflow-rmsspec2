@@ -165,6 +165,27 @@ def _BatchMatrixSolveLsShape(op):
   lhs_shape[-2].assert_is_compatible_with(rhs_shape[-2])
   return [lhs_shape[:-2].concatenate([lhs_shape[-1], rhs_shape[-1]])]
 
+@ops.RegisterShape("MatrixDecompSvdS")
+def _MatrixDecompSvdS(op):
+  matrix_shape = op.inputs[0].get_shape().with_rank(2)
+  smallDim = min( matrix_shape[0], matrix_shape[1] ) 
+  return [ smallDim ]
+
+@ops.RegisterShape("MatrixDecompSvdU")
+def _MatrixDecompSvdU(op):
+  matrix_shape = op.inputs[0].get_shape().with_rank(2)
+  return [ [matrix_shape[0], matrix_shape[0] ] ]
+
+@ops.RegisterShape("MatrixDecompSvdV")
+def _MatrixDecompSvdV(op):
+  matrix_shape = op.inputs[0].get_shape().with_rank(2)
+  return [ [matrix_shape[1], matrix_shape[1]] ]
+
+@ops.RegisterShape("MatrixDecompQrQ")
+def _MatrixDecompQrQ(op):
+  matrix_shape = op.inputs[0].get_shape().with_rank(2)
+  return [ [matrix_shape[0], matrix_shape[0]] ]
+
 
 # pylint: disable=invalid-name
 def matrix_solve_ls(matrix, rhs, l2_regularizer=0.0, fast=True, name=None):
@@ -276,5 +297,18 @@ def batch_matrix_solve_ls(matrix,
                                               l2_regularizer,
                                               fast=fast,
                                               name=name)
+
+def matrix_decomp_svd_s(matrix, name=None):
+  return gen_linalg_ops.matrix_decomp_svd_s(matrix, name=name)
+
+def matrix_decomp_svd_u(matrix, name=None):
+  return gen_linalg_ops.matrix_decomp_svd_u(matrix, name=name)
+
+def matrix_decomp_svd_v(matrix, name=None):
+  return gen_linalg_ops.matrix_decomp_svd_v(matrix, name=name)
+
+def matrix_decomp_qr_q(matrix, name=None):
+  return gen_linalg_ops.matrix_decomp_qr_q(matrix, name=name)
+
 
 # pylint: enable=invalid-name

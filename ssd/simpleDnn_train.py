@@ -2,6 +2,8 @@ import tensorflow as tf
 import os.path
 import time
 
+# pylint: disable=E1101
+
 from tensorflow.examples.tutorials.mnist import input_data
 import simpleDnn_model as model
 # Basic model parameters as external flags.
@@ -122,7 +124,7 @@ def run_training():
         
         # Instantiate a SummaryWriter to output summaries and the Graph.
         summary_writer = tf.train.SummaryWriter(FLAGS.train_dir,
-                                                graph_def=sess.graph_def)
+                                                graph_def=sess.graph.as_graph_def(add_shapes=True))
 
         # And then after everything is built, start the training loop.
         for step in range(FLAGS.max_steps):

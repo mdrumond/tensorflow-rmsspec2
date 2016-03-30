@@ -7,8 +7,9 @@ Input [28*28] -> Layer1 [300] -> Output [10]
 The loss function used os logSoftMax"""
 
 import math
-
 import tensorflow as tf
+
+# pylint: disable=E1101
 
 # The MNIST dataset has 10 classes, representing the digits 0 through 9.
 NUM_CLASSES = 10
@@ -49,6 +50,9 @@ def inference(images):
         biases = tf.Variable(tf.zeros([LAYER_SIZE]),
                              name='biases')
         hidden1 = tf.nn.relu(tf.matmul(images, weights) + biases)
+        # Add summary ops to collect data
+        tf.histogram_summary('weights', weights)
+        tf.histogram_summary('biases', biases)
 
     # Output Layer - is this correct? does this layer have any weights?
     with tf.name_scope('softmax_linear'):
@@ -63,20 +67,19 @@ def inference(images):
     
     
 def loss(logits, labels):
-      """Calculates the loss from the logits and the labels.
-
+    """Calculates the loss from the logits and the labels.
+    
       Args:
       logits: Logits tensor, float - [batch_size, NUM_CLASSES].
       labels: Labels tensor, int32 - [batch_size].
 
       Returns:
       loss: NLL criterion Loss tensor of type float.
-      """
-      loss = tf.reduce_mean(NLLCriterion(logits,labels), name='nll_mean')
-      return loss
+    """
+    return  tf.reduce_mean(NLLCriterion(logits,labels), name='nll_mean')
 
 
-def training_SGD(loss, learning_rate):
+def training_SGD(loss_graph, learning_rate):
     """Sets up the training Ops.
     
     Creates a summarizer to track the loss over time in TensorBoard.
@@ -94,14 +97,14 @@ def training_SGD(loss, learning_rate):
     train_op: The Op for training.
     """
     # Add a scalar summary for the snapshot loss.
-    tf.scalar_summary(loss.op.name, loss)
+    tf.scalar_summary(loss_graph.op.name, loss_graph)
     # Create the gradient descent optimizer with the given learning rate.
     optimizer = tf.train.GradientDescentOptimizer(learning_rate)
     # Create a variable to track the global step.
     global_step = tf.Variable(0, name='global_step', trainable=False)
     # Use the optimizer to apply the gradients that minimize the loss
     # (and also increment the global step counter) as a single training step.
-    train_op = optimizer.minimize(loss, global_step=global_step)
+    train_op = optimizer.minimize(loss_graph, global_step=global_step)
     return train_op
 
 
