@@ -1,4 +1,4 @@
-#  Copyright 2015-present Scikit Flow Authors. All Rights Reserved.
+#  Copyright 2015-present The Scikit Flow Authors. All Rights Reserved.
 #
 #  Licensed under the Apache License, Version 2.0 (the "License");
 #  you may not use this file except in compliance with the License.
@@ -11,6 +11,9 @@
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
 
 import numpy as np
 from sklearn import metrics
@@ -21,14 +24,10 @@ from tensorflow.contrib import skflow
 
 ### Training data
 
-# Download dbpedia_csv.tar.gz from
-# https://drive.google.com/folderview?id=0Bz8a_Dbh9Qhbfll6bVpmNUtUcFdjYmF2SEpmZUZUcVNiMUw1TWN6RDV3a0JHT3kxLVhVR2M
-# Unpack: tar -xvf dbpedia_csv.tar.gz
-
-train = pandas.read_csv('dbpedia_csv/train.csv', header=None)
-X_train, y_train = train[2], train[0]
-test = pandas.read_csv('dbpedia_csv/test.csv', header=None)
-X_test, y_test = test[2], test[0]
+# Downloads, unpacks and reads DBpedia dataset.
+dbpedia = skflow.datasets.load_dataset('dbpedia')
+X_train, y_train = pandas.DataFrame(dbpedia.train.data)[1], pandas.Series(dbpedia.train.target)
+X_test, y_test = pandas.DataFrame(dbpedia.test.data)[1], pandas.Series(dbpedia.test.target)
 
 ### Process vocabulary
 
@@ -84,9 +83,8 @@ def cnn_model(X, y):
 classifier = skflow.TensorFlowEstimator(model_fn=cnn_model, n_classes=15,
     steps=100, optimizer='Adam', learning_rate=0.01, continue_training=True)
 
-# Continuesly train for 1000 steps & predict on test set.
+# Continuously train for 1000 steps & predict on test set.
 while True:
     classifier.fit(X_train, y_train, logdir='/tmp/tf_examples/word_cnn')
     score = metrics.accuracy_score(y_test, classifier.predict(X_test))
     print('Accuracy: {0:f}'.format(score))
-

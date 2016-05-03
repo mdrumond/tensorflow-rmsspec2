@@ -58,6 +58,9 @@ void BiasGPU<T>::compute(const GPUDevice& d, const T* input, const T* bias,
   const int32 bias_size = channel;
   const int32 image_size = height * width;
   const int32 total_count = batch * bias_size * image_size;
+  if (total_count == 0) {
+    return;
+  }
   CudaLaunchConfig config = GetCudaLaunchConfig(total_count, d);
   if (data_format == FORMAT_NHWC) {
     BiasNHWCKernel<
@@ -101,7 +104,7 @@ __global__ void BiasGradNHWC_SharedAtomics(int32 nthreads,
                                            T* bias_backprop, int32 bias_size) {
   T* s_data = reinterpret_cast<T*>(s_buf);
   for (int32 index = threadIdx.x; index < bias_size; index += blockDim.x) {
-    s_data[index] = 0;
+    s_data[index] = T(0);
   }
   __syncthreads();
 
@@ -174,6 +177,9 @@ void BiasGradGPU<T>::compute(const GPUDevice& d, const T* output_backprop,
   const int32 bias_size = channel;
   const int32 image_size = height * width;
   const int32 total_count = batch * bias_size * image_size;
+  if (total_count == 0) {
+    return;
+  }
   static constexpr int32 kWarpSize = 32;
   CudaLaunchConfig config = GetCudaLaunchConfig(total_count, d);
 
@@ -221,7 +227,7 @@ void BiasGradGPU<T>::compute(const GPUDevice& d, const T* output_backprop,
   template struct BiasGPU<T>; \
   template struct BiasGradGPU<T>;
 
-TF_CALL_GPU_NUMBER_TYPES(DEFINE_GPU_SPECS);
+TF_CALL_GPU_NUMBER_TYPES_NO_HALF(DEFINE_GPU_SPECS);
 
 }  // end namespace tensorflow
 

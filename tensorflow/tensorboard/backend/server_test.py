@@ -113,7 +113,9 @@ class TensorboardServerTest(tf.test.TestCase):
                   'scalars': ['simple_values'],
                   'histograms': ['histogram'],
                   'images': ['image'],
-                  'graph': True}})
+                  'audio': ['audio'],
+                  'graph': True,
+                  'run_metadata': ['test run']}})
 
   def testHistograms(self):
     """Test the format of /data/histograms."""
@@ -153,6 +155,20 @@ class TensorboardServerTest(tf.test.TestCase):
     response = self._get('/data/individualImage?%s' % image_query)
     self.assertEqual(response.status, 200)
 
+  def testAudio(self):
+    """Test listing audio and retrieving an individual audio clip."""
+    audio_json = self._getJson('/data/audio?tag=audio&run=run1')
+    audio_query = audio_json[0]['query']
+    # We don't care about the format of the audio query.
+    del audio_json[0]['query']
+    self.assertEqual(audio_json, [{
+        'wall_time': 0,
+        'step': 0,
+        'content_type': 'audio/wav'
+    }])
+    response = self._get('/data/individualAudio?%s' % audio_query)
+    self.assertEqual(response.status, 200)
+
   def testGraph(self):
     """Test retrieving the graph definition."""
     response = self._get('/data/graph?run=run1&limit_attr_size=1024'
@@ -168,9 +184,21 @@ class TensorboardServerTest(tf.test.TestCase):
     self.assertEqual(graph.node[1].name, 'b')
     # Make sure the second node has an attribute that was filtered out because
     # it was too large and was added to the "too large" attributes list.
-    self.assertEqual(graph.node[1].attr.keys(), ['_very_large_attrs'])
+    self.assertEqual(list(graph.node[1].attr.keys()), ['_very_large_attrs'])
     self.assertEqual(graph.node[1].attr['_very_large_attrs'].list.s,
-                     ['very_large_attr'])
+                     [b'very_large_attr'])
+
+  def testRunMetadata(self):
+    """Test retrieving the run metadata information."""
+    response = self._get('/data/run_metadata?run=run1&tag=test%20run')
+    self.assertEqual(response.status, 200)
+    # Decompress (unzip) the response, since run outputs come gzipped.
+    run_metadata_pbtxt = self._decodeResponse(response)
+    # Parse from pbtxt into a message.
+    run_metadata = tf.RunMetadata()
+    text_format.Parse(run_metadata_pbtxt, run_metadata)
+    self.assertEqual(len(run_metadata.step_stats.dev_stats), 1)
+    self.assertEqual(run_metadata.step_stats.dev_stats[0].device, 'test device')
 
   def _GenerateTestData(self):
     """Generates the test data directory.
@@ -202,7 +230,13 @@ class TensorboardServerTest(tf.test.TestCase):
     node2 = graph_def.node.add()
     node2.name = 'b'
     node2.attr['very_large_attr'].s = b'a' * 2048  # 2 KB attribute
-    writer.add_event(tf.Event(graph_def=graph_def.SerializeToString()))
+    writer.add_graph(graph_def)
+
+    # Add a simple run metadata event.
+    run_metadata = tf.RunMetadata()
+    device_stats = run_metadata.step_stats.dev_stats.add()
+    device_stats.device = 'test device'
+    writer.add_run_metadata(run_metadata, 'test run')
 
     # 1x1 transparent GIF.
     encoded_image = base64.b64decode(
@@ -211,13 +245,22 @@ class TensorboardServerTest(tf.test.TestCase):
                                    width=1,
                                    colorspace=1,
                                    encoded_image_string=encoded_image)
+
+    audio_value = tf.Summary.Audio(sample_rate=44100,
+                                   length_frames=22050,
+                                   num_channels=2,
+                                   encoded_audio_string=b'',
+                                   content_type='audio/wav')
     writer.add_event(tf.Event(wall_time=0,
                               step=0,
-                              summary=tf.Summary(value=[tf.Summary.Value(
-                                  tag='histogram',
-                                  histo=histogram_value), tf.Summary.Value(
-                                      tag='image',
-                                      image=image_value)])))
+                              summary=tf.Summary(value=[
+                                  tf.Summary.Value(tag='histogram',
+                                                   histo=histogram_value),
+                                  tf.Summary.Value(tag='image',
+                                                   image=image_value),
+                                  tf.Summary.Value(tag='audio',
+                                                   audio=audio_value)
+                              ])))
 
     # Write 100 simple values.
     for i in xrange(1, self._SCALAR_COUNT + 1):

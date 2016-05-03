@@ -38,6 +38,12 @@
 #   TF_BUILD_APPEND_ARGUMENTS:
 #                      Additional command line arguments for the bazel,
 #                      pip.sh or android.sh command
+#   TF_BUILD_MAVX:
+#                      (unset | MAVX | MAVX2)
+#                      If set to MAVX or MAVX2, will cause bazel to use the
+#                      additional flag --copt=-mavx or --copt=-mavx2, to
+#                      perform AVX or AVX2 builds, respectively. This requires
+#                      AVX- or AVX2-compatible CPUs.
 #   TF_BUILD_BAZEL_TARGET:
 #                      Used to override the default bazel build target:
 #                      //tensorflow/...
@@ -54,6 +60,13 @@
 #                      tutorials tests (Applicable only if TF_BUILD_IS_PIP is
 #                      PIP or BOTH).
 #                      See builds/test_tutorials.sh
+#   TF_BUILD_INTEGRATION_TESTS:
+#                      If set this will perform integration tests. See
+#                      builds/integration_tests.sh.
+#   TF_BUILD_RUN_BENCHMARKS:
+#                      If set to any non-empty and non-0 value, will perform
+#                      the benchmark tests (see *_logged_benchmark targets in
+#                      tools/test/BUILD)
 #
 # This script can be used by Jenkins parameterized / matrix builds.
 
@@ -96,7 +109,10 @@ BAZEL_SERIAL_FLAG="--jobs=1"
 
 PIP_CMD="${CI_BUILD_DIR}/builds/pip.sh"
 PIP_TEST_TUTORIALS_FLAG="--test_tutorials"
+PIP_INTEGRATION_TESTS_FLAG="--integration_tests"
 ANDROID_CMD="${CI_BUILD_DIR}/builds/android.sh"
+
+BENCHMARK_CMD="${CI_BUILD_DIR}/builds/benchmark.sh"
 
 BAZEL_TARGET="//tensorflow/..."
 
@@ -114,6 +130,10 @@ TF_BUILD_PYTHON_VERSION=$(to_lower ${TF_BUILD_PYTHON_VERSION})
 TF_BUILD_IS_OPT=$(to_lower ${TF_BUILD_IS_OPT})
 TF_BUILD_IS_PIP=$(to_lower ${TF_BUILD_IS_PIP})
 
+if [[ ! -z "${TF_BUILD_MAVX}" ]]; then
+  TF_BUILD_MAVX=$(to_lower ${TF_BUILD_MAVX})
+fi
+
 # Print parameter values
 echo "Required build parameters:"
 echo "  TF_BUILD_CONTAINER_TYPE=${TF_BUILD_CONTAINER_TYPE}"
@@ -122,6 +142,7 @@ echo "  TF_BUILD_IS_OPT=${TF_BUILD_IS_OPT}"
 echo "  TF_BUILD_IS_PIP=${TF_BUILD_IS_PIP}"
 echo "Optional build parameters:"
 echo "  TF_BUILD_DRY_RUN=${TF_BUILD_DRY_RUN}"
+echo "  TF_BUILD_MAVX=${TF_BUILD_MAVX}"
 echo "  TF_BUILD_APPEND_CI_DOCKER_EXTRA_PARAMS="\
 "${TF_BUILD_APPEND_CI_DOCKER_EXTRA_PARAMS}"
 echo "  TF_BUILD_APPEND_ARGUMENTS=${TF_BUILD_APPEND_ARGUMENTS}"
@@ -129,6 +150,18 @@ echo "  TF_BUILD_BAZEL_TARGET=${TF_BUILD_BAZEL_TARGET}"
 echo "  TF_BUILD_BAZEL_CLEAN=${TF_BUILD_BAZEL_CLEAN}"
 echo "  TF_BUILD_SERIAL_TESTS=${TF_BUILD_SERIAL_TESTS}"
 echo "  TF_BUILD_TEST_TUTORIALS=${TF_BUILD_TEST_TUTORIALS}"
+echo "  TF_BUILD_INTEGRATION_TESTS=${TF_BUILD_INTEGRATION_TESTS}"
+echo "  TF_BUILD_RUN_BENCHMARKS=${TF_BUILD_RUN_BENCHMARKS}"
+
+# Function that tries to determine CUDA capability, if deviceQuery binary
+# is available on path
+function get_cuda_capability_version() {
+  if [[ ! -z $(which deviceQuery) ]]; then
+    # The first listed device is used
+    echo $(deviceQuery | grep "CUDA Capability .* version" | \
+        head -1 | awk '{print $NF}')
+  fi
+}
 
 # Process container type
 CTYPE=${TF_BUILD_CONTAINER_TYPE}
@@ -137,6 +170,19 @@ if [[ ${CTYPE} == "cpu" ]]; then
   :
 elif [[ ${CTYPE} == "gpu" ]]; then
   OPT_FLAG="--config=cuda"
+
+  # Attempt to determine CUDA capability version and use it
+  if [[ "${TF_BUILD_APPEND_CI_DOCKER_EXTRA_PARAMS}" != \
+        *"TF_CUDA_COMPUTE_CAPABILITIES="* ]]; then
+    CUDA_CAPA_VER=$(get_cuda_capability_version)
+    if [[ ! -z ${CUDA_CAPA_VER} ]]; then
+      echo "TF_CUDA_COMPUTE_CAPABILITIES is not set."
+      echo "Using CUDA capability version from deviceQuery: ${CUDA_CAPA_VER}"
+      TF_BUILD_APPEND_CI_DOCKER_EXTRA_PARAMS=\
+"${TF_BUILD_APPEND_CI_DOCKER_EXTRA_PARAMS} -e "\
+"TF_CUDA_COMPUTE_CAPABILITIES=${CUDA_CAPA_VER}"
+    fi
+  fi
 elif [[ ${CTYPE} == "android" ]]; then
   :
 else
@@ -159,6 +205,13 @@ if [[ -z "$(which docker)" ]]; then
 
 fi
 
+# Determine if this is a benchmarks job
+RUN_BENCHMARKS=0
+if [[ ! -z "${TF_BUILD_RUN_BENCHMARKS}" ]] &&
+   [[ "${TF_BUILD_RUN_BENCHMARKS}" != "0" ]]; then
+  RUN_BENCHMARKS=1
+fi
+
 # Process Bazel "-c opt" flag
 if [[ ${TF_BUILD_IS_OPT} == "no_opt" ]]; then
   # PIP builds are done only with the -c opt flag
@@ -174,8 +227,38 @@ else
   die "Unrecognized value in TF_BUILD_IS_OPT: \"${TF_BUILD_IS_OPT}\""
 fi
 
+# Process MAVX option
+if [[ ! -z "${TF_BUILD_MAVX}" ]]; then
+  if [[ "${TF_BUILD_MAVX}" == "mavx" ]]; then
+    OPT_FLAG="${OPT_FLAG} --copt=-mavx"
+  elif [[ "${TF_BUILD_MAVX}" == "mavx2" ]]; then
+    OPT_FLAG="${OPT_FLAG} --copt=-mavx2"
+  else
+    die "Unsupported value in TF_BUILD_MAVX: ${TF_BUILD_MAVX}"
+  fi
+fi
+
 # Strip whitespaces from OPT_FLAG
 OPT_FLAG=$(str_strip "${OPT_FLAG}")
+
+
+# Filter out benchmark tests if this is not a benchmarks job
+EXTRA_ARGS=""
+if [[ "${TF_BUILD_APPEND_ARGUMENTS}" == *"--test_tag_filters="* ]]; then
+  ITEMS=(${TF_BUILD_APPEND_ARGUMENTS})
+
+  for ITEM in "${ITEMS[@]}"; do
+    if [[ ${ITEM} == *"--test_tag_filters="* ]] &&
+      [[ ${ITEM} != *"benchmark-test"* ]]; then
+      EXTRA_ARGS="${EXTRA_ARGS} ${ITEM},-benchmark-test"
+    else
+      EXTRA_ARGS="${EXTRA_ARGS} ${ITEM}"
+    fi
+  done
+else
+  EXTRA_ARGS="${EXTRA_ARGS} --test_tag_filters=-benchmark-test"
+fi
+
 
 # Process PIP install-test option
 if [[ ${TF_BUILD_IS_PIP} == "no_pip" ]] ||
@@ -188,7 +271,7 @@ if [[ ${TF_BUILD_IS_PIP} == "no_pip" ]] ||
   if [[ ${CTYPE} == "cpu" ]] || [[ ${CTYPE} == "gpu" ]]; then
     # Run Bazel
     NO_PIP_MAIN_CMD="${MAIN_CMD} ${BAZEL_CMD} ${OPT_FLAG} "\
-"${TF_BUILD_APPEND_ARGUMENTS} ${BAZEL_TARGET}"
+"${EXTRA_ARGS} ${BAZEL_TARGET}"
     NO_PIP_MAIN_CMD=$(str_strip "${NO_PIP_MAIN_CMD}")
 
     if [[ ! -z "${TF_BUILD_SERIAL_TESTS}" ]] &&
@@ -198,12 +281,12 @@ if [[ ${TF_BUILD_IS_PIP} == "no_pip" ]] ||
       # But the 2nd (test) step will be done serially.
 
       BUILD_ONLY_CMD="${BAZEL_BUILD_ONLY_CMD} ${OPT_FLAG} "\
-"${TF_BUILD_APPEND_ARGUMENTS} ${BAZEL_TARGET}"
+"${EXTRA_ARGS} ${BAZEL_TARGET}"
       echo "Build-only command: ${BUILD_ONLY_CMD}"
 
       NO_PIP_MAIN_CMD="${BUILD_ONLY_CMD} && "\
 "${BAZEL_CMD} ${OPT_FLAG} ${BAZEL_SERIAL_FLAG} "\
-"${TF_BUILD_APPEND_ARGUMENTS} ${BAZEL_TARGET}"
+"${EXTRA_ARGS} ${BAZEL_TARGET}"
       echo "Parallel-build + serial-test command: ${NO_PIP_MAIN_CMD}"
     fi
   elif [[ ${CTYPE} == "android" ]]; then
@@ -221,8 +304,18 @@ if [[ ${TF_BUILD_IS_PIP} == "pip" ]] ||
     exit 0
   fi
 
-  PIP_MAIN_CMD="${MAIN_CMD} ${PIP_CMD} ${CTYPE} "\
-"${TF_BUILD_APPEND_ARGUMENTS}"
+  PIP_MAIN_CMD="${MAIN_CMD} ${PIP_CMD} ${CTYPE} ${EXTRA_AGRS}"
+
+  # Add flag for mavx/mavx2
+  if [[ ! -z "${TF_BUILD_MAVX}" ]]; then
+    PIP_MAIN_CMD="${PIP_MAIN_CMD} --${TF_BUILD_MAVX}"
+  fi
+
+  # Add flag for integration tests
+  if [[ ! -z "${TF_BUILD_INTEGRATION_TESTS}" ]] &&
+     [[ "${TF_BUILD_INTEGRATION_TESTS}" != "0" ]]; then
+    PIP_MAIN_CMD="${PIP_MAIN_CMD} ${PIP_INTEGRATION_TESTS_FLAG}"
+  fi
 
   # Add command for tutorial test
   if [[ ! -z "${TF_BUILD_TEST_TUTORIALS}" ]] &&
@@ -240,7 +333,10 @@ if [[ ${TF_BUILD_IS_PIP} == "pip" ]] ||
   fi
 fi
 
-if [[ ${TF_BUILD_IS_PIP} == "no_pip" ]]; then
+
+if [[ ${RUN_BENCHMARKS} == "1" ]]; then
+  MAIN_CMD="${BENCHMARK_CMD} ${OPT_FLAG}"
+elif [[ ${TF_BUILD_IS_PIP} == "no_pip" ]]; then
   MAIN_CMD="${NO_PIP_MAIN_CMD}"
 elif [[ ${TF_BUILD_IS_PIP} == "pip" ]]; then
   MAIN_CMD="${PIP_MAIN_CMD}"
@@ -249,7 +345,6 @@ elif [[ ${TF_BUILD_IS_PIP} == "both" ]]; then
 else
   die "Unrecognized value in TF_BUILD_IS_PIP: \"${TF_BUILD_IS_PIP}\""
 fi
-
 
 # Process Python version
 if [[ ${TF_BUILD_PYTHON_VERSION} == "python2" ]]; then
@@ -284,8 +379,7 @@ EXTRA_PARAMS="${EXTRA_PARAMS} ${TF_BUILD_APPEND_CI_DOCKER_EXTRA_PARAMS}"
 # TF_BUILD_SERIAL_TESTS=1), are written to a bash script, which is
 # then called. The name of the script is randomized to make concurrent
 # builds on the node possible.
-RAND_STR=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 8 | head -n 1)
-TMP_SCRIPT=/tmp/ci_parameterized_build_${RAND_STR}.sh
+TMP_SCRIPT="$(mktemp)_ci_parameterized_build.sh"
 
 if [[ "${DO_DOCKER}" == "1" ]]; then
   # Map the tmp script into the Docker container

@@ -20,11 +20,14 @@ limitations under the License.
 #include <unordered_map>
 #include <vector>
 
+#include "tensorflow/core/common_runtime/device_factory.h"
 #include "tensorflow/core/framework/allocator.h"
 #include "tensorflow/core/framework/graph.pb.h"
+#include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/tensor.h"
 #include "tensorflow/core/framework/tensor_testutil.h"
 #include "tensorflow/core/framework/types.pb.h"
+#include "tensorflow/core/graph/costmodel.h"
 #include "tensorflow/core/graph/graph.h"
 #include "tensorflow/core/graph/testlib.h"
 #include "tensorflow/core/kernels/ops_util.h"
@@ -33,6 +36,7 @@ limitations under the License.
 #include "tensorflow/core/lib/core/status_test_util.h"
 #include "tensorflow/core/lib/core/threadpool.h"
 #include "tensorflow/core/platform/test.h"
+#include "tensorflow/core/public/session.h"
 #include "tensorflow/core/public/session_options.h"
 #include "tensorflow/core/util/device_name_utils.h"
 
@@ -147,7 +151,7 @@ TEST_F(DirectSessionMinusAXTest, TestConcurrency) {
       std::vector<Tensor> outputs;
       // Run the graph
       Status s = session->Run(inputs, output_names, {}, &outputs);
-      ASSERT_TRUE(s.ok());
+      TF_ASSERT_OK(s);
       ASSERT_EQ(1, outputs.size());
       auto mat = outputs[0].matrix<float>();
       EXPECT_FLOAT_EQ(3.0, mat(0, 0));
@@ -184,7 +188,7 @@ TEST_F(DirectSessionMinusAXTest, TestPerSessionThreads) {
       std::vector<Tensor> outputs;
       // Run the graph
       Status s = session->Run(inputs, output_names, {}, &outputs);
-      ASSERT_TRUE(s.ok());
+      TF_ASSERT_OK(s);
       ASSERT_EQ(1, outputs.size());
       auto mat = outputs[0].matrix<float>();
       EXPECT_FLOAT_EQ(3.0, mat(0, 0));
@@ -267,14 +271,14 @@ TEST_F(DirectSessionMinusAXTest, RunSimpleNetworkWithOpts) {
   std::vector<string> target_nodes = {y_neg_};
   std::vector<Tensor> outputs;
 
-  // Prepares RunOptions and RunOutputs
+  // Prepares RunOptions and RunMetadata
   RunOptions run_options;
   run_options.set_trace_level(RunOptions::FULL_TRACE);
-  RunOutputs run_outputs;
-  EXPECT_EQ(run_outputs.step_stats().dev_stats_size(), 0);
+  RunMetadata run_metadata;
+  EXPECT_EQ(run_metadata.step_stats().dev_stats_size(), 0);
 
   Status s = session->Run(run_options, inputs, output_names, target_nodes,
-                          &outputs, &run_outputs);
+                          &outputs, &run_metadata);
   TF_ASSERT_OK(s);
 
   ASSERT_EQ(1, outputs.size());
@@ -284,9 +288,9 @@ TEST_F(DirectSessionMinusAXTest, RunSimpleNetworkWithOpts) {
   ASSERT_TRUE(outputs[0].IsInitialized());
   EXPECT_FLOAT_EQ(5.0, mat(0, 0));
 
-  // Checks RunOutputs is well-formed
-  ASSERT_TRUE(run_outputs.has_step_stats());
-  EXPECT_EQ(run_outputs.step_stats().dev_stats_size(), 2);
+  // Checks RunMetadata is well-formed
+  ASSERT_TRUE(run_metadata.has_step_stats());
+  EXPECT_EQ(run_metadata.step_stats().dev_stats_size(), 2);
 }
 
 TEST(DirectSessionTest, KeepsStateAcrossRunsOfSession) {
@@ -354,7 +358,7 @@ TEST(DirectSessionTest, MultipleFeedTest) {
   Status s = session->Run(
       {}, {first_identity->name() + ":0", second_identity->name() + ":0"}, {},
       &outputs);
-  ASSERT_TRUE(s.ok());
+  TF_ASSERT_OK(s);
   ASSERT_EQ(2, outputs.size());
   ASSERT_EQ(1.0, outputs[0].flat<float>()(0));
   ASSERT_EQ(2.0, outputs[1].flat<float>()(0));
@@ -362,7 +366,7 @@ TEST(DirectSessionTest, MultipleFeedTest) {
   s = session->Run(
       {}, {second_identity->name() + ":0", first_identity->name() + ":0"}, {},
       &outputs);
-  ASSERT_TRUE(s.ok());
+  TF_ASSERT_OK(s);
   ASSERT_EQ(2, outputs.size());
   ASSERT_EQ(2.0, outputs[0].flat<float>()(0));
   ASSERT_EQ(1.0, outputs[1].flat<float>()(0));
@@ -377,7 +381,7 @@ TEST(DirectSessionTest, MultipleFeedTest) {
       {{first_const->name(), value_11}, {second_const->name(), value_22}},
       {first_identity->name() + ":0", second_identity->name() + ":0"}, {},
       &outputs);
-  ASSERT_TRUE(s.ok());
+  TF_ASSERT_OK(s);
   ASSERT_EQ(2, outputs.size());
   ASSERT_EQ(11.0, outputs[0].flat<float>()(0));
   ASSERT_EQ(22.0, outputs[1].flat<float>()(0));
@@ -387,7 +391,7 @@ TEST(DirectSessionTest, MultipleFeedTest) {
       {{second_const->name(), value_22}, {first_const->name(), value_11}},
       {first_identity->name() + ":0", second_identity->name() + ":0"}, {},
       &outputs);
-  ASSERT_TRUE(s.ok());
+  TF_ASSERT_OK(s);
   ASSERT_EQ(2, outputs.size());
   ASSERT_EQ(11.0, outputs[0].flat<float>()(0));
   ASSERT_EQ(22.0, outputs[1].flat<float>()(0));
@@ -458,7 +462,7 @@ TEST(DirectSessionTest, PartialRunTest) {
       {first_identity->name() + ":0", second_identity->name() + ":0",
        third_identity->name() + ":0"},
       {}, &handle);
-  ASSERT_TRUE(s.ok());
+  TF_ASSERT_OK(s);
 
   Tensor value_11(DT_FLOAT, TensorShape({}));
   value_11.scalar<float>()() = 11.0;
@@ -468,7 +472,7 @@ TEST(DirectSessionTest, PartialRunTest) {
   // Feed first_const, fetch first_identity
   s = session->PRun(handle, {{first_const->name(), value_11}},
                     {first_identity->name() + ":0"}, &outputs);
-  ASSERT_TRUE(s.ok());
+  TF_ASSERT_OK(s);
   ASSERT_EQ(1, outputs.size());
   ASSERT_EQ(11.0, outputs[0].flat<float>()(0));
 
@@ -477,7 +481,7 @@ TEST(DirectSessionTest, PartialRunTest) {
       handle, {{second_const->name(), value_22}},
       {second_identity->name() + ":0", third_identity->name() + ":0"},
       &outputs);
-  ASSERT_TRUE(s.ok());
+  TF_ASSERT_OK(s);
   ASSERT_EQ(2, outputs.size());
   ASSERT_EQ(22.0, outputs[0].flat<float>()(0));
   ASSERT_EQ(11.0 + 22.0, outputs[1].flat<float>()(0));
@@ -511,7 +515,7 @@ TEST(DirectSessionTest, PartialRunMissingFeed) {
   string handle;
   Status s = session->PRunSetup({first_const->name(), second_const->name()},
                                 {third_identity->name() + ":0"}, {}, &handle);
-  ASSERT_TRUE(s.ok());
+  TF_ASSERT_OK(s);
 
   // Feed first_const, fetch third_identity
   Tensor value_11(DT_FLOAT, TensorShape({}));
@@ -544,7 +548,7 @@ TEST(DirectSessionTest, PartialRunMultiOutputFeed) {
   string handle;
   Status s = session->PRunSetup({switch_node->name() + ":1"},
                                 {fourth_identity->name() + ":0"}, {}, &handle);
-  ASSERT_TRUE(s.ok());
+  TF_ASSERT_OK(s);
 
   // Fetch fourth_identity without feeds.
   s = session->PRun(handle, {}, {fourth_identity->name() + ":0"}, &outputs);
@@ -555,9 +559,80 @@ TEST(DirectSessionTest, PartialRunMultiOutputFeed) {
   // Feed switch_node:1 and fetch fourth_identity.
   s = session->PRun(handle, {{switch_node->name() + ":1", bool_value}},
                     {fourth_identity->name() + ":0"}, &outputs);
-  ASSERT_TRUE(s.ok());
+  TF_ASSERT_OK(s);
   ASSERT_EQ(1, outputs.size());
   ASSERT_EQ(true, outputs[0].flat<bool>()(0));
+}
+
+TEST(DirectSessionTest, RunHandleTest) {
+  GraphDef def;
+  Graph g(OpRegistry::Global());
+
+  Tensor value0(DT_FLOAT, TensorShape({}));
+  value0.scalar<float>()() = 1.0;
+  Node* const0 = test::graph::Constant(&g, value0);
+  Node* identity0 = test::graph::Identity(&g, const0);
+
+  Tensor value1(DT_FLOAT, TensorShape({}));
+  value1.scalar<float>()() = 2.0;
+  Node* const1 = test::graph::Constant(&g, value1);
+  Node* node3 = test::graph::Add(&g, identity0, const1);
+  Node* node4 = test::graph::Unary(&g, "GetSessionHandle", node3);
+
+  Tensor value2(DT_STRING, TensorShape({}));
+  Node* const2 = test::graph::Constant(&g, value2);
+  Node* node5 = test::graph::GetSessionTensor(&g, const2);
+  Node* node6 = test::graph::Add(&g, node5, const1);
+
+  Node* node7 = test::graph::Unary(&g, "DeleteSessionTensor", const2);
+
+  test::graph::ToGraphDef(&g, &def);
+
+  std::unique_ptr<Session> session(CreateSession());
+  ASSERT_TRUE(session != nullptr);
+  TF_ASSERT_OK(session->Create(def));
+
+  // First run call: Create a handle.
+  std::vector<Tensor> outputs;
+  Status s = session->Run({}, {node4->name() + ":0"}, {}, &outputs);
+  ASSERT_TRUE(s.ok());
+  ASSERT_EQ(1, outputs.size());
+
+  // Second run call: Use a handle.
+  std::vector<Tensor> outputs1;
+  s = session->Run({{const2->name(), outputs[0]}}, {node6->name() + ":0"}, {},
+                   &outputs1);
+  ASSERT_TRUE(s.ok());
+  ASSERT_EQ(1, outputs1.size());
+  ASSERT_EQ(5.0, outputs1[0].flat<float>()(0));
+
+  // Third run call: Delete a handle.
+  std::vector<Tensor> outputs2;
+  s = session->Run({{const2->name(), outputs[0]}}, {}, {node7->name()},
+                   &outputs2);
+  ASSERT_TRUE(s.ok());
+}
+
+TEST(DirectSessionTest, CreateGraphFailsWhenAssigningAFedVar) {
+  Graph graph(OpRegistry::Global());
+
+  Node* a = test::graph::Var(&graph, DT_FLOAT, {});
+  Node* b = test::graph::Constant(&graph, {});
+
+  Tensor zero(DT_FLOAT, {});
+  test::FillValues<float>(&zero, {0});
+
+  // a = b
+  Node* assign = test::graph::Assign(&graph, a, b);
+
+  std::unique_ptr<Session> session(CreateSession());
+  ASSERT_TRUE(session != nullptr);
+
+  // The graph is invalid since a constant cannot be assigned to a constant.
+  // The return Status of session->Run should flag this as an invalid argument.
+  std::vector<Tensor> outputs;
+  Status s = session->Run({{a->name(), zero}}, {assign->name()}, {}, &outputs);
+  ASSERT_TRUE(errors::IsInvalidArgument(s));
 }
 
 TEST(DirectSessionTest, TimeoutSession) {

@@ -561,43 +561,62 @@ dimension. For example, tiling `[a b c d]` by `[2]` produces
 
 - - -
 
-### `tf.pad(input, paddings, name=None)` {#pad}
+### `tf.pad(tensor, paddings, mode='CONSTANT', name=None)` {#pad}
 
-Pads a tensor with zeros.
+Pads a tensor.
 
-This operation pads a `input` with zeros according to the `paddings` you
-specify. `paddings` is an integer tensor with shape `[Dn, 2]`, where n is the
-rank of `input`. For each dimension D of `input`, `paddings[D, 0]` indicates
-how many zeros to add before the contents of `input` in that dimension, and
-`paddings[D, 1]` indicates how many zeros to add after the contents of `input`
-in that dimension.
+This operation pads a `tensor` according to the `paddings` you specify.
+`paddings` is an integer tensor with shape `[n, 2]`, where n is the rank of
+`tensor`. For each dimension D of `input`, `paddings[D, 0]` indicates how
+many values to add before the contents of `tensor` in that dimension, and
+`paddings[D, 1]` indicates how many values to add after the contents of
+`tensor` in that dimension. If `mode` is "REFLECT" then both `paddings[D, 0]`
+and `paddings[D, 1]` must be no greater than `tensor.dim_size(D) - 1`. If
+`mode` is "SYMMETRIC" then both `paddings[D, 0]` and `paddings[D, 1]` must be
+no greater than `tensor.dim_size(D)`.
 
 The padded size of each dimension D of the output is:
 
-`paddings(D, 0) + input.dim_size(D) + paddings(D, 1)`
+`paddings[D, 0] + tensor.dim_size(D) + paddings[D, 1]`
 
 For example:
 
-```prettyprint
-# 't' is [[1, 1], [2, 2]]
-# 'paddings' is [[1, 1], [2, 2]]
-# rank of 't' is 2
-pad(t, paddings) ==> [[0, 0, 0, 0, 0, 0]
-                      [0, 0, 1, 1, 0, 0]
-                      [0, 0, 2, 2, 0, 0]
-                      [0, 0, 0, 0, 0, 0]]
+```python
+# 't' is [[1, 2, 3], [4, 5, 6]].
+# 'paddings' is [[1, 1,], [2, 2]].
+# rank of 't' is 2.
+pad(t, paddings, "CONSTANT") ==> [[0, 0, 0, 0, 0, 0, 0],
+                                  [0, 0, 1, 2, 3, 0, 0],
+                                  [0, 0, 4, 5, 6, 0, 0],
+                                  [0, 0, 0, 0, 0, 0, 0]]
+
+pad(t, paddings, "REFLECT") ==> [[6, 5, 4, 5, 6, 5, 4],
+                                 [3, 2, 1, 2, 3, 2, 1],
+                                 [6, 5, 4, 5, 6, 5, 4],
+                                 [3, 2, 1, 2, 3, 2, 1]]
+
+pad(t, paddings, "SYMMETRIC") ==> [[2, 1, 1, 2, 3, 3, 2],
+                                   [2, 1, 1, 2, 3, 3, 2],
+                                   [5, 4, 4, 5, 6, 6, 5],
+                                   [5, 4, 4, 5, 6, 6, 5]]
 ```
 
 ##### Args:
 
 
-*  <b>`input`</b>: A `Tensor`.
+*  <b>`tensor`</b>: A `Tensor`.
 *  <b>`paddings`</b>: A `Tensor` of type `int32`.
+*  <b>`mode`</b>: One of "CONSTANT", "REFLECT", or "SYMMETRIC".
 *  <b>`name`</b>: A name for the operation (optional).
 
 ##### Returns:
 
-  A `Tensor`. Has the same type as `input`.
+  A `Tensor`. Has the same type as `tensor`.
+
+##### Raises:
+
+
+*  <b>`ValueError`</b>: When mode is not one of "CONSTANT", "REFLECT", or "SYMMETRIC".
 
 
 - - -
@@ -883,7 +902,7 @@ tf.transpose(x, perm=[1, 0]) ==> [[1 4]
 #           [[7  8  9]
 #            [10 11 12]]]
 # Take the transpose of the matrices in dimension-0
-tf.transpose(b, perm=[0, 2, 1]) ==> [[[1  4]
+tf.transpose(x, perm=[0, 2, 1]) ==> [[[1  4]
                                       [2  5]
                                       [3  6]]
 
@@ -902,6 +921,93 @@ tf.transpose(b, perm=[0, 2, 1]) ==> [[[1  4]
 ##### Returns:
 
   A transposed `Tensor`.
+
+
+- - -
+
+### `tf.space_to_batch(input, paddings, block_size, name=None)` {#space_to_batch}
+
+SpaceToBatch for 4-D tensors of type T.
+
+Zero-pads and then rearranges (permutes) blocks of spatial data into batch.
+More specifically, this op outputs a copy of the input tensor where values from
+the `height` and `width` dimensions are moved to the `batch` dimension. After
+the zero-padding, both `height` and `width` of the input must be divisible by the
+block size.
+
+##### Args:
+
+
+*  <b>`input`</b>: A `Tensor`. 4-D with shape `[batch, height, width, depth]`.
+*  <b>`paddings`</b>: A `Tensor` of type `int32`.
+    2-D tensor of non-negative integers with shape `[2, 2]`. It specifies
+      the padding of the input with zeros across the spatial dimensions as follows:
+
+          paddings = [[pad_top, pad_bottom], [pad_left, pad_right]]
+
+      The effective spatial dimensions of the zero-padded input tensor will be:
+
+          height_pad = pad_top + height + pad_bottom
+          width_pad = pad_left + width + pad_right
+
+    The attr `block_size` must be greater than one. It indicates the block size.
+
+      * Non-overlapping blocks of size `block_size x block size` in the height and
+        width dimensions are rearranged into the batch dimension at each location.
+      * The batch of the output tensor is `batch * block_size * block_size`.
+      * Both height_pad and width_pad must be divisible by block_size.
+
+    The shape of the output will be:
+
+        [batch*block_size*block_size, height_pad/block_size, width_pad/block_size,
+         depth]
+
+*  <b>`block_size`</b>: An `int`.
+*  <b>`name`</b>: A name for the operation (optional).
+
+##### Returns:
+
+  A `Tensor`. Has the same type as `input`.
+
+
+- - -
+
+### `tf.batch_to_space(input, crops, block_size, name=None)` {#batch_to_space}
+
+BatchToSpace for 4-D tensors of type T.
+
+Rearranges (permutes) data from batch into blocks of spatial data, followed by
+cropping. This is the reverse transformation of SpaceToBatch. More specifically,
+this op outputs a copy of the input tensor where values from the `batch`
+dimension are moved in spatial blocks to the `height` and `width` dimensions,
+followed by cropping along the `height` and `width` dimensions.
+
+##### Args:
+
+
+*  <b>`input`</b>: A `Tensor`. 4-D tensor with shape
+    `[batch*block_size*block_size, height_pad/block_size, width_pad/block_size,
+      depth]`. Note that the batch size of the input tensor must be divisible by
+    `block_size * block_size`.
+*  <b>`crops`</b>: A `Tensor` of type `int32`.
+    2-D tensor of non-negative integers with shape `[2, 2]`. It specifies
+    how many elements to crop from the intermediate result across the spatial
+    dimensions as follows:
+
+        crops = [[crop_top, crop_bottom], [crop_left, crop_right]]
+
+*  <b>`block_size`</b>: An `int`.
+*  <b>`name`</b>: A name for the operation (optional).
+
+##### Returns:
+
+  A `Tensor`. Has the same type as `input`.
+  4-D with shape `[batch, height, width, depth]`, where:
+
+        height = height_pad - crop_top - crop_bottom
+        width = width_pad - crop_left - crop_right
+
+  The attr `block_size` must be greater than one. It indicates the block size.
 
 
 - - -
@@ -1132,6 +1238,39 @@ this operation will permute `params` accordingly.
 
 - - -
 
+### `tf.gather_nd(params, indices, name=None)` {#gather_nd}
+
+Gather values from `params` according to `indices`.
+
+`indices` must be integer tensor, containing indices into `params`.
+It must be shape `[d_0, ..., d_N, R]` where `R` is the rank of `params`.
+The innermost dimension of `indices` (with length `R`) corresponds to the
+indices of `params`.
+
+Produces an output tensor with shape `[d_0, ..., d_{n-1}]` where:
+
+    output[i, j, k, ...] = params[indices[i, j, k, ..., :]]
+
+e.g. for `indices` a matrix:
+
+    output[i] = params[indices[i, :]]
+
+##### Args:
+
+
+*  <b>`params`</b>: A `Tensor`. R-D.  The tensor from which to gather values.
+*  <b>`indices`</b>: A `Tensor`. Must be one of the following types: `int32`, `int64`.
+    (N+1)-D.  Index tensor having shape `[d_0, ..., d_N, R]`.
+*  <b>`name`</b>: A name for the operation (optional).
+
+##### Returns:
+
+  A `Tensor`. Has the same type as `params`.
+  N-D.  Values from `params` gathered from indices given by `indices`.
+
+
+- - -
+
 ### `tf.dynamic_partition(data, partitions, num_partitions, name=None)` {#dynamic_partition}
 
 Partitions `data` into `num_partitions` tensors using indices from `partitions`.
@@ -1277,6 +1416,7 @@ where `(i1,...,iK)` is the ith `True` entry of `mask` (row-major order).
 
 
 *  <b>`Examples`</b>: 
+
 ```python
 # 2-D example
 a = [[1, 2], [3, 4], [5, 6]]
@@ -1420,8 +1560,8 @@ dimension be equal to sizeof(`type`)/sizeof(`T`). The shape then goes from
 ##### Args:
 
 
-*  <b>`input`</b>: A `Tensor`. Must be one of the following types: `float32`, `float64`, `int64`, `int32`, `uint8`, `uint16`, `int16`, `int8`, `complex64`, `qint8`, `quint8`, `qint32`.
-*  <b>`type`</b>: A `tf.DType` from: `tf.float32, tf.float64, tf.int64, tf.int32, tf.uint8, tf.uint16, tf.int16, tf.int8, tf.complex64, tf.qint8, tf.quint8, tf.qint32`.
+*  <b>`input`</b>: A `Tensor`. Must be one of the following types: `float32`, `float64`, `int64`, `int32`, `uint8`, `uint16`, `int16`, `int8`, `complex64`, `complex128`, `qint8`, `quint8`, `qint32`, `half`.
+*  <b>`type`</b>: A `tf.DType` from: `tf.float32, tf.float64, tf.int64, tf.int32, tf.uint8, tf.uint16, tf.int16, tf.int8, tf.complex64, tf.complex128, tf.qint8, tf.quint8, tf.qint32, tf.half`.
 *  <b>`name`</b>: A name for the operation (optional).
 
 ##### Returns:

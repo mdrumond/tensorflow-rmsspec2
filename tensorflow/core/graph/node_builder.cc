@@ -28,18 +28,21 @@ NodeBuilder::NodeOut::NodeOut(Node* n, int i)  // NOLINT(runtime/explicit)
       index(i),
       dt(SafeGetOutput(node, i, &error)) {}
 
-NodeBuilder::NodeOut::NodeOut(const string& name, int i, DataType t)
-    : node(nullptr), error(false), name(name), index(i), dt(t) {}
+NodeBuilder::NodeOut::NodeOut(StringPiece n, int i, DataType t)
+    : node(nullptr), error(false), name(n.ToString()), index(i), dt(t) {}
 
 NodeBuilder::NodeOut::NodeOut()
     : node(nullptr), error(true), index(0), dt(DT_FLOAT) {}
 
-NodeBuilder::NodeBuilder(const string& name, const string& op_name,
+NodeBuilder::NodeBuilder(StringPiece name, StringPiece op_name,
                          const OpRegistryInterface* op_registry)
     : def_builder_(name, op_name, op_registry) {}
 
-NodeBuilder::NodeBuilder(const string& name, const OpDef* op_def)
+NodeBuilder::NodeBuilder(StringPiece name, const OpDef* op_def)
     : def_builder_(name, op_def) {}
+
+NodeBuilder::NodeBuilder(const NodeDefBuilder& def_builder)
+    : def_builder_(def_builder) {}
 
 NodeBuilder& NodeBuilder::Input(Node* src_node, int src_index) {
   inputs_.emplace_back(src_node, src_index);
@@ -90,7 +93,7 @@ NodeBuilder& NodeBuilder::ControlInputs(gtl::ArraySlice<Node*> src_nodes) {
   return *this;
 }
 
-NodeBuilder& NodeBuilder::Device(const string& device_spec) {
+NodeBuilder& NodeBuilder::Device(StringPiece device_spec) {
   def_builder_.Device(device_spec);
   return *this;
 }
@@ -105,6 +108,8 @@ Status NodeBuilder::Finalize(Graph* graph, Node** created_node) const {
   NodeDef node_def;
   TF_RETURN_IF_ERROR(def_builder_.Finalize(&node_def));
   TF_RETURN_IF_ERROR(ValidateNodeDef(node_def, def_builder_.op_def()));
+  TF_RETURN_IF_ERROR(
+      CheckOpDeprecation(def_builder_.op_def(), graph->versions().producer()));
   Status status;
   Node* node = graph->AddNode(node_def, &status);
   if (!status.ok()) return status;

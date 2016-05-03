@@ -85,6 +85,7 @@ REGISTER_OP("BatchNormWithGlobalNormalization")
     .Attr("T: numbertype")
     .Attr("variance_epsilon: float")
     .Attr("scale_after_normalization: bool")
+    .Deprecated(9, "Use tf.nn.batch_normalization()")
     .Doc(R"doc(
 Batch normalization.
 
@@ -121,6 +122,7 @@ REGISTER_OP("BatchNormWithGlobalNormalizationGrad")
     .Attr("T: numbertype")
     .Attr("variance_epsilon: float")
     .Attr("scale_after_normalization: bool")
+    .Deprecated(9, "Use tf.nn.batch_normalization()")
     .Doc(R"doc(
 Gradients for batch normalization.
 
@@ -243,7 +245,7 @@ performs the following:
 3. For each patch, right-multiplies the filter matrix and the image patch
    vector.
 
-In detail, with the default NCHW format,
+In detail, with the default NHWC format,
 
     output[b, i, j, k] =
         sum_{di, dj, q} input[b, strides[1] * i + di, strides[2] * j + dj, q] *
@@ -715,12 +717,29 @@ softmax: Same shape as `logits`.
 
 // --------------------------------------------------------------------------
 
+REGISTER_OP("LogSoftmax")
+    .Input("logits: T")
+    .Output("logsoftmax: T")
+    .Attr("T: {float, double}")
+    .Doc(R"doc(
+Computes log softmax activations.
+
+For each batch `i` and class `j` we have
+
+    logsoftmax[i, j] = logits[i, j] - log(sum(exp(logits[i])))
+
+logits: 2-D with shape `[batch_size, num_classes]`.
+logsoftmax: Same shape as `logits`.
+)doc");
+
+// --------------------------------------------------------------------------
+
 REGISTER_OP("SoftmaxCrossEntropyWithLogits")
     .Input("features: T")
     .Input("labels: T")
     .Output("loss: T")
     .Output("backprop: T")
-    .Attr("T: {float, double}")
+    .Attr("T: {half, float, double}")
     .Doc(R"doc(
 Computes softmax cross entropy cost and gradients to backpropagate.
 
@@ -798,6 +817,7 @@ REGISTER_OP("TopK")
     .Attr("k: int >= 0")
     .Attr("sorted: bool = true")
     .Attr("T: realnumbertype")
+    .Deprecated(7, "Use TopKV2 instead")
     .Doc(R"doc(
 Finds values and indices of the `k` largest elements for the last dimension.
 

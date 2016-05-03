@@ -20,8 +20,11 @@ limitations under the License.
 #include <vector>
 
 #include "tensorflow/core/framework/attr_value_util.h"
+#include "tensorflow/core/framework/graph.pb_text.h"
 #include "tensorflow/core/framework/op.h"
+#include "tensorflow/core/framework/op_def.pb_text.h"
 #include "tensorflow/core/framework/op_def_util.h"
+#include "tensorflow/core/framework/tensor.pb_text.h"
 #include "tensorflow/core/lib/core/errors.h"
 #include "tensorflow/core/lib/gtl/map_util.h"
 #include "tensorflow/core/lib/strings/scanner.h"
@@ -72,13 +75,13 @@ string SummarizeNodeDef(const NodeDef& node_def) {
   return ret;
 }
 
-const AttrValue* AttrSlice::Find(const string& attr_name) const {
-  auto iter = attrs_->find(attr_name);
+const AttrValue* AttrSlice::Find(StringPiece attr_name) const {
+  auto iter = attrs_->find(attr_name.ToString());
   if (iter == attrs_->end()) return nullptr;
   return &iter->second;
 }
 
-Status AttrSlice::Find(const string& attr_name,
+Status AttrSlice::Find(StringPiece attr_name,
                        const AttrValue** attr_value) const {
   *attr_value = Find(attr_name);
   if (*attr_value != nullptr) {
@@ -97,7 +100,7 @@ Status AttrSlice::Find(const string& attr_name,
 // The ... is to allow the caller to inject some value validation code.  Use
 // just ; if no additional validation code is needed.
 #define DEFINE_GET_ATTR(TYPE, FIELD, ATTR_TYPE, APPEND_OP, CAST, ...)         \
-  Status GetNodeAttr(const AttrSlice& attrs, const string& attr_name,         \
+  Status GetNodeAttr(const AttrSlice& attrs, StringPiece attr_name,           \
                      TYPE* value) {                                           \
     const AttrValue* attr_value;                                              \
     TF_RETURN_IF_ERROR(attrs.Find(attr_name, &attr_value));                   \
@@ -107,7 +110,7 @@ Status AttrSlice::Find(const string& attr_name,
     *value = CAST;                                                            \
     return Status::OK();                                                      \
   }                                                                           \
-  Status GetNodeAttr(const AttrSlice& attrs, const string& attr_name,         \
+  Status GetNodeAttr(const AttrSlice& attrs, StringPiece attr_name,           \
                      std::vector<TYPE>* value) {                              \
     const AttrValue* attr_value;                                              \
     TF_RETURN_IF_ERROR(attrs.Find(attr_name, &attr_value));                   \
@@ -143,13 +146,14 @@ DEFINE_GET_ATTR(PartialTensorShape, shape, "shape", emplace_back,
 DEFINE_GET_ATTR(Tensor, tensor, "tensor", emplace_back, t, Tensor t;
                 if (!t.FromProto(v)) {
                   return errors::InvalidArgument(
-                      "Attr ", attr_name, " has value ", v.ShortDebugString(),
+                      "Attr ", attr_name, " has value ",
+                      ProtoShortDebugString(v),
                       " that can't be converted to a Tensor");
                 })
 
 #undef DEFINE_GET_ATTR
 
-Status GetNodeAttr(const AttrSlice& attrs, const string& attr_name,
+Status GetNodeAttr(const AttrSlice& attrs, StringPiece attr_name,
                    DataTypeVector* value) {
   const AttrValue* attr_value;
   TF_RETURN_IF_ERROR(attrs.Find(attr_name, &attr_value));
@@ -160,7 +164,7 @@ Status GetNodeAttr(const AttrSlice& attrs, const string& attr_name,
   return Status::OK();
 }
 
-Status GetNodeAttr(const AttrSlice& attrs, const string& attr_name,
+Status GetNodeAttr(const AttrSlice& attrs, StringPiece attr_name,
                    const TensorProto** value) {
   const AttrValue* attr_value;
   TF_RETURN_IF_ERROR(attrs.Find(attr_name, &attr_value));
@@ -169,7 +173,7 @@ Status GetNodeAttr(const AttrSlice& attrs, const string& attr_name,
   return Status::OK();
 }
 
-Status GetNodeAttr(const AttrSlice& attrs, const string& attr_name,
+Status GetNodeAttr(const AttrSlice& attrs, StringPiece attr_name,
                    const NameAttrList** value) {
   const AttrValue* attr_value;
   TF_RETURN_IF_ERROR(attrs.Find(attr_name, &attr_value));
@@ -204,7 +208,7 @@ Status AddArgToSig(const NodeDef& node_def, const OpDef::ArgDef& arg_def,
       }
     } else {
       return errors::InvalidArgument("Missing type or type_attr field in ",
-                                     arg_def.ShortDebugString());
+                                     ProtoShortDebugString(arg_def));
     }
   } else if (!arg_def.type_attr().empty()) {
     const AttrValue* attr_value;
@@ -222,7 +226,7 @@ Status AddArgToSig(const NodeDef& node_def, const OpDef::ArgDef& arg_def,
     sig->push_back(arg_def.type());
   } else {
     return errors::InvalidArgument("No type fields in ",
-                                   arg_def.ShortDebugString());
+                                   ProtoShortDebugString(arg_def));
   }
   if (arg_def.is_ref()) {
     // For all types that were added by this function call, make them refs.

@@ -61,6 +61,16 @@ tensorflow::ImportNumpy();
   $2 = static_cast<size_t>(py_size);
 }
 
+// The target input to TF_SetTarget() is passed as a null-terminated
+// const char*.
+%typemap(in) (const char* target) {
+  $1 = PyBytes_AsString($input);
+  if (!$1) {
+    // Python has raised an error.
+    SWIG_fail;
+  }
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // BEGIN TYPEMAPS FOR tensorflow::TF_Run_wrapper()
 ////////////////////////////////////////////////////////////////////////////////
@@ -214,7 +224,7 @@ tensorflow::ImportNumpy();
     $result = PyUnicode_FromStringAndSize(
 %#endif
       *$2, strlen(*$2));
-    delete *$2;
+    delete[] *$2;
   }
 }
 
@@ -227,11 +237,7 @@ tensorflow::ImportNumpy();
 // is not expected to be NULL-terminated, and TF_Buffer.length does not count
 // the terminator.
 %typemap(out) TF_Buffer (TF_GetOpList,TF_GetBuffer) {
-%#if PY_MAJOR_VERSION < 3
-  $result = PyString_FromStringAndSize(
-%#else
-  $result = PyUnicode_FromStringAndSize(
-%#endif
+  $result = PyBytes_FromStringAndSize(
       reinterpret_cast<const char*>($1.data), $1.length);
 }
 
@@ -267,7 +273,8 @@ tensorflow::ImportNumpy();
   def TF_NewSessionOptions(target=None, config=None):
     opts = _TF_NewSessionOptions()
     if target is not None:
-      _TF_SetTarget(opts, target)
+      from tensorflow.python.util import compat
+      _TF_SetTarget(opts, compat.as_bytes(target))
     if config is not None:
       from tensorflow.core.protobuf import config_pb2
       if not isinstance(config, config_pb2.ConfigProto):

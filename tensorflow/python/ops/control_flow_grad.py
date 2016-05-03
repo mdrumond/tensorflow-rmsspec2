@@ -23,6 +23,7 @@ from six.moves import xrange  # pylint: disable=redefined-builtin
 from tensorflow.python.framework import ops
 from tensorflow.python.ops import control_flow_ops
 from tensorflow.python.ops import math_ops
+# go/tf-wildcard-import
 # pylint: disable=wildcard-import,undefined-variable
 from tensorflow.python.ops.control_flow_ops import *
 from tensorflow.python.ops.gen_control_flow_ops import *
@@ -64,13 +65,7 @@ def _SwitchGrad(op, *grad):
   elif isinstance(op_ctxt, CondContext):
     good_grad = grad[op_ctxt.branch]
     zero_grad = grad[1 - op_ctxt.branch]
-    # If we are in a grad context, this switch is part of a cond within a
-    # loop. In this case, we have called ControlFlowState.ZeroLike() so grad
-    # is ready for merge. Otherwise, we need a switch to control zero_grad.
-    if not (grad_ctxt and grad_ctxt.grad_state):
-      dtype = good_grad.dtype
-      branch = op_ctxt.branch
-      zero_grad = switch(zero_grad, op_ctxt.pred, dtype=dtype)[1 - branch]
+    # At this point, we have created zero_grad guarded by the right switch.
     return merge([good_grad, zero_grad], name="cond_grad")[0], None
   else:
     false_grad = switch(grad[0], op.inputs[1])[0]
@@ -142,7 +137,7 @@ def _ExitGrad(_, grad):
   # pylint: enable=protected-access
   if not grad_ctxt.back_prop:
     # The flag `back_prop` is set by users to suppress gradient
-    # computation for this loop. If the flag `back_prop` is true,
+    # computation for this loop. If the attribute `back_prop` is false,
     # no gradient computation.
     return None
   grad_ctxt.AddName(grad.name)
@@ -184,11 +179,14 @@ def _EnterGrad(op, grad):
   grad_ctxt = graph._get_control_flow_context()
   # pylint: enable=protected-access
   if not grad_ctxt.back_prop:
-    # If the flag `back_prop` is true, no gradient computation.
+    # If the attribute `back_prop` is true, no gradient computation.
     return grad
   if op.get_attr("is_constant"):
     # Add a gradient accumulator for each loop invariant.
-    result = grad_ctxt.AddBackPropAccumulator(grad)
+    if isinstance(grad, ops.IndexedSlices):
+      result = grad_ctxt.AddBackPropIndexedSlicesAccumulator(grad)
+    else:
+      result = grad_ctxt.AddBackPropAccumulator(grad)
   else:
     result = exit(grad)
     grad_ctxt.ExitResult([result])

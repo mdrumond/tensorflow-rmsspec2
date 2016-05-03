@@ -1,4 +1,4 @@
-#  Copyright 2015-present Scikit Flow Authors. All Rights Reserved.
+#  Copyright 2015-present The Scikit Flow Authors. All Rights Reserved.
 #
 #  Licensed under the Apache License, Version 2.0 (the "License");
 #  you may not use this file except in compliance with the License.
@@ -11,6 +11,9 @@
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
 
 import os
 import numpy as np
@@ -18,19 +21,14 @@ from sklearn import metrics
 import pandas
 
 import tensorflow as tf
-from tensorflow.models.rnn import rnn, rnn_cell
 from tensorflow.contrib import skflow
 
 ### Training data
 
-# Download dbpedia_csv.tar.gz from
-# https://drive.google.com/folderview?id=0Bz8a_Dbh9Qhbfll6bVpmNUtUcFdjYmF2SEpmZUZUcVNiMUw1TWN6RDV3a0JHT3kxLVhVR2M
-# Unpack: tar -xvf dbpedia_csv.tar.gz
-
-train = pandas.read_csv('dbpedia_csv/train.csv', header=None)
-X_train, y_train = train[2], train[0]
-test = pandas.read_csv('dbpedia_csv/test.csv', header=None)
-X_test, y_test = test[2], test[0]
+# Downloads, unpacks and reads DBpedia dataset.
+dbpedia = skflow.datasets.load_dataset('dbpedia')
+X_train, y_train = pandas.DataFrame(dbpedia.train.data)[1], pandas.Series(dbpedia.train.target)
+X_test, y_test = pandas.DataFrame(dbpedia.test.data)[1], pandas.Series(dbpedia.test.target)
 
 ### Process vocabulary
 
@@ -66,10 +64,10 @@ def rnn_model(X, y):
     # word_list results to be a list of tensors [batch_size, EMBEDDING_SIZE].
     word_list = skflow.ops.split_squeeze(1, MAX_DOCUMENT_LENGTH, word_vectors)
     # Create a Gated Recurrent Unit cell with hidden size of EMBEDDING_SIZE.
-    cell = rnn_cell.GRUCell(EMBEDDING_SIZE)
+    cell = tf.nn.rnn_cell.GRUCell(EMBEDDING_SIZE)
     # Create an unrolled Recurrent Neural Networks to length of
     # MAX_DOCUMENT_LENGTH and passes word_list as inputs for each unit.
-    _, encoding = rnn.rnn(cell, word_list, dtype=tf.float32)
+    _, encoding = tf.nn.rnn(cell, word_list, dtype=tf.float32)
     # Given encoding of RNN, take encoding of last step (e.g hidden size of the
     # neural network of last step) and pass it as features for logistic
     # regression over output classes.
@@ -82,7 +80,7 @@ else:
     classifier = skflow.TensorFlowEstimator(model_fn=rnn_model, n_classes=15,
         steps=100, optimizer='Adam', learning_rate=0.01, continue_training=True)
 
-    # Continuesly train for 1000 steps
+    # Continuously train for 1000 steps
     while True:
         try:
             classifier.fit(X_train, y_train)

@@ -51,12 +51,8 @@ message OptimizerOptions {
     // L1 is the default level.
     // Optimization performed at L1 :
     // 1. Common subexpression elimination
-    L1 = 0;
-
-    // Optimization performed at L2 :
-    // 1. Common subexpression elimination
     // 2. Constant folding
-    L2 = 2;
+    L1 = 0;
 
     // No optimizations
     L0 = -1;
@@ -76,6 +72,10 @@ message GraphOptions {
 
   // Options controlling how graph is optimized.
   OptimizerOptions optimizer_options = 3;
+
+  // Build a cost model detailing the memory usage and performance of
+  // each node of the graph.
+  bool build_cost_model = 4;
 };
 
 // Session configuration parameters.
@@ -155,7 +155,7 @@ message RunOptions {
 }
 
 // EXPERIMENTAL. Metadata output (i.e., non-Tensor) for a single Run() call.
-message RunOutputs {
+message RunMetadata {
   // Statistics traced for this step. Populated if tracing is turned on via the
   // "RunOptions" proto.
   // EXPERIMENTAL: The format and set of events may change in future versions.

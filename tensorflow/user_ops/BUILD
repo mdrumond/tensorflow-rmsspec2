@@ -23,14 +23,13 @@ load("//tensorflow:tensorflow.bzl", "tf_custom_op_library")
 tf_custom_op_library(
     name = "ackermann_op.so",
     srcs = ["ackermann_op.cc"],
-    deps = ["//google/protobuf"],
 )
 
 py_tests(
     name = "ackermann_test",
+    size = "small",
     srcs = ["ackermann_test.py"],
     data = [":ackermann_op.so"],
-    tags = ["notsan"],
 )
 
 filegroup(

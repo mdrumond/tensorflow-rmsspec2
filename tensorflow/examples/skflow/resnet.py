@@ -1,4 +1,4 @@
-#  Copyright 2015-present Scikit Flow Authors. All Rights Reserved.
+#  Copyright 2015-present The Scikit Flow Authors. All Rights Reserved.
 #
 #  Licensed under the Apache License, Version 2.0 (the "License");
 #  you may not use this file except in compliance with the License.
@@ -13,19 +13,21 @@
 #  limitations under the License.
 
 """
-This example builds deep residual network for mnist data. 
+This example builds deep residual network for mnist data.
 Reference Paper: http://arxiv.org/pdf/1512.03385.pdf
 
 Note that this is still a work-in-progress. Feel free to submit a PR
-to make this better. 
+to make this better.
 """
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
 
 import os
 from collections import namedtuple
 from math import sqrt
 
 from sklearn import metrics
-
 import tensorflow as tf
 from tensorflow.examples.tutorials.mnist import input_data
 from tensorflow.contrib import skflow
@@ -81,7 +83,7 @@ def res_net(x, y, activation=tf.nn.relu):
 
             # 1x1 convolution responsible for reducing dimension
             with tf.variable_scope(name + '/conv_in'):
-                conv = skflow.ops.conv2d(net, block.num_filters,
+                conv = skflow.ops.conv2d(net, block.bottleneck_size,
                                          [1, 1], [1, 1, 1, 1],
                                          padding='VALID',
                                          activation=activation,
@@ -154,4 +156,3 @@ while True:
 
     # Save model graph and checkpoints.
     classifier.save("models/resnet/")
-

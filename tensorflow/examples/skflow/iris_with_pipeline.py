@@ -1,4 +1,4 @@
-#  Copyright 2015-present Scikit Flow Authors. All Rights Reserved.
+#  Copyright 2015-present The Scikit Flow Authors. All Rights Reserved.
 #
 #  Licensed under the Apache License, Version 2.0 (the "License");
 #  you may not use this file except in compliance with the License.
@@ -11,6 +11,9 @@
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
 
 from sklearn.pipeline import Pipeline
 from sklearn.datasets import load_iris
@@ -29,7 +32,7 @@ scaler = StandardScaler()
 # DNN classifier
 DNNclassifier = skflow.TensorFlowDNNClassifier(hidden_units=[10, 20, 10], n_classes=3, steps=200)
 
-pipeline = Pipeline([('scaler', scaler, ('DNNclassifier', DNNclassifier)])
+pipeline = Pipeline([('scaler', scaler), ('DNNclassifier', DNNclassifier)])
 
 pipeline.fit(X_train, y_train)
 

@@ -1,6 +1,6 @@
 # encoding: utf-8
 
-#  Copyright 2015-present Scikit Flow Authors. All Rights Reserved.
+#  Copyright 2015-present The Scikit Flow Authors. All Rights Reserved.
 #
 #  Licensed under the Apache License, Version 2.0 (the "License");
 #  you may not use this file except in compliance with the License.
@@ -13,8 +13,9 @@
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
-
-from __future__ import division, print_function, absolute_import
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
 
 import itertools
 import os
@@ -125,4 +126,3 @@ while True:
         print('English: %s. French (pred): %s, French (gold): %s' %
             (input_text, output_text, gold.decode('utf-8')))
         print(inp_data, pred)
-

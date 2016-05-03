@@ -1,4 +1,4 @@
-#  Copyright 2015-present Scikit Flow Authors. All Rights Reserved.
+#  Copyright 2015-present The Scikit Flow Authors. All Rights Reserved.
 #
 #  Licensed under the Apache License, Version 2.0 (the "License");
 #  you may not use this file except in compliance with the License.
@@ -11,6 +11,9 @@
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
 
 from sklearn import datasets, metrics, cross_validation
 
@@ -37,7 +40,7 @@ X_train, X_test, y_train, y_test = cross_validation.train_test_split(iris.data, 
 X_train, y_train, X_test, y_test = [pd.DataFrame(data) for data in [X_train, y_train, X_test, y_test]]
 X_train, y_train, X_test, y_test = [dd.from_pandas(data, npartitions=2) for data in [X_train, y_train, X_test, y_test]]
 
-# Intialize a TensorFlow linear classifier
+# Initialize a TensorFlow linear classifier
 classifier = skflow.TensorFlowLinearClassifier(n_classes=3)
 
 # Fit the model using training set

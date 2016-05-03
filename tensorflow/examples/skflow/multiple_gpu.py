@@ -1,4 +1,4 @@
-#  Copyright 2015-present Scikit Flow Authors. All Rights Reserved.
+#  Copyright 2015-present The Scikit Flow Authors. All Rights Reserved.
 #
 #  Licensed under the Apache License, Version 2.0 (the "License");
 #  you may not use this file except in compliance with the License.
@@ -11,6 +11,9 @@
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
 
 from sklearn import datasets, metrics, cross_validation
 import tensorflow as tf
@@ -28,7 +31,7 @@ def my_model(X, y):
     CUDNN 6.5 V2 from NVIDIA need to be installed beforehand. 
     """
     with tf.device('/gpu:1'):
-    	layers = skflow.ops.dnn(X, [10, 20, 10], keep_prob=0.5)
+    	layers = skflow.ops.dnn(X, [10, 20, 10], dropout=0.5)
     with tf.device('/gpu:2'):
     	return skflow.models.logistic_regression(layers, y)
 

@@ -1,4 +1,4 @@
-#t Copyright 2015-present Scikit Flow Authors. All Rights Reserved.
+#t Copyright 2015-present The Scikit Flow Authors. All Rights Reserved.
 #
 #  Licensed under the Apache License, Version 2.0 (the "License");
 #  you may not use this file except in compliance with the License.
@@ -17,15 +17,18 @@ This example demonstrates one way to access the weights of a custom skflow
 model. It is otherwise identical to the standard MNIST convolutional code.
 """
 
-from sklearn import metrics
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
 
+from sklearn import metrics
 import tensorflow as tf
 from tensorflow.examples.tutorials.mnist import input_data
 from tensorflow.contrib import skflow
 
 ### Download and load MNIST data.
 
-mnist = input_data.read_data_sets('MNIST_data')
+mnist = skflow.datasets.load_dataset('mnist')
 
 ### Linear classifier.
 
@@ -58,7 +61,7 @@ def conv_model(X, y):
         # reshape tensor into a batch of vectors
         h_pool2_flat = tf.reshape(h_pool2, [-1, 7 * 7 * 64])
     # densely connected layer with 1024 neurons
-    h_fc1 = skflow.ops.dnn(h_pool2_flat, [1024], activation=tf.nn.relu, keep_prob=0.5)
+    h_fc1 = skflow.ops.dnn(h_pool2_flat, [1024], activation=tf.nn.relu, dropout=0.5)
     return skflow.models.logistic_regression(h_fc1, y)
 
 # Training and predicting

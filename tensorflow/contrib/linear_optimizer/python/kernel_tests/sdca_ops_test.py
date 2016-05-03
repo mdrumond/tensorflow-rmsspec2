@@ -28,6 +28,8 @@ from tensorflow.contrib.linear_optimizer.python.ops.sdca_ops import SdcaModel
 from tensorflow.python.framework.test_util import TensorFlowTestCase
 from tensorflow.python.platform import googletest
 
+_MAX_ITERATIONS = 100
+
 
 def make_example_proto(feature_dict, target, value=1.0):
   e = tf.train.Example()
@@ -85,7 +87,7 @@ def make_dense_examples_dict(dense_feature_values, weights, labels):
 
 
 def make_variable_dict(max_age, max_gender):
-  # TODO(dbaylor):  Figure out how to derive max_age & max_gender from
+  # TODO(sibyl-toe9oF2e):  Figure out how to derive max_age & max_gender from
   # examples_dict.
   age_weights = tf.Variable(tf.zeros([max_age + 1], dtype=tf.float32))
   gender_weights = tf.Variable(tf.zeros([max_gender + 1], dtype=tf.float32))
@@ -112,12 +114,13 @@ def make_dense_variable_dict(num_dense_features, num_examples):
 def get_binary_predictions_for_logistic(predictions, cutoff=0.5):
   return tf.cast(
       tf.greater_equal(predictions, tf.ones_like(predictions) * cutoff),
-      tf.float32)
+      dtype=tf.int32)
 
 
 def get_binary_predictions_for_hinge(predictions):
-  all_ones = tf.ones_like(predictions)
-  return tf.add(tf.sign(predictions), all_ones) / 2
+  return tf.cast(
+      tf.greater_equal(predictions, tf.zeros_like(predictions)),
+      dtype=tf.int32)
 
 
 # Setup the single container shared across all tests. This is testing proper
@@ -127,12 +130,12 @@ CONTAINER = uuid.uuid4().hex
 
 # Clear the shared container.
 def tearDown():
-  # TODO(katsiapis): Proper cleanup of Containers when possible.
+  # TODO(sibyl-Mooth6ku): Proper cleanup of Containers when possible.
   pass
 
 
-# TODO(katsiapis): Add tests that exercise L1 and Shrinking.
-# TODO(pmol): Refactor tests to avoid repetition of boilerplate code.
+# TODO(sibyl-Mooth6ku): Add tests that exercise L1 and Shrinking.
+# TODO(sibyl-vie3Poto): Refactor tests to avoid repetition of boilerplate code.
 class SdcaOptimizerTest(TensorFlowTestCase):
   """Base SDCA optimizer test class for any loss type."""
 
@@ -172,33 +175,6 @@ class SdcaOptimizerTest(TensorFlowTestCase):
           'No examples found or all examples have zero weight.'):
         lr.approximate_duality_gap().eval()
 
-  def testDuplicateExampleIds(self):
-    # Setup test data with 1 positive, and 1 negative example.
-    example_protos = [
-        make_example_proto(
-            {'age': [0],
-             'gender': [0]}, 0),
-        make_example_proto(
-            {'age': [1],
-             'gender': [1]}, 1),
-    ]
-    example_weights = [1.0, 1.0]
-    with self._single_threaded_test_session():
-      examples = make_example_dict(example_protos, example_weights)
-      examples['example_ids'] = ['duplicate_id'
-                                 for _ in examples['example_ids']]
-      variables = make_variable_dict(1, 1)
-      options = dict(symmetric_l2_regularization=0.5,
-                     symmetric_l1_regularization=0,
-                     loss_type='squared_loss')
-
-      lr = SdcaModel(CONTAINER, examples, variables, options)
-      tf.initialize_all_variables().run()
-      self.assertAllClose([0.0, 0.0], lr.predictions(examples).eval())
-      with self.assertRaisesOpError('Detected 1 duplicates in example_ids'):
-        lr.minimize().run()
-      self.assertAllClose([0.0, 0.0], lr.predictions(examples).eval())
-
 
 class SdcaWithLogisticLossTest(SdcaOptimizerTest):
   """SDCA optimizer test class for logistic loss."""
@@ -228,8 +204,9 @@ class SdcaWithLogisticLossTest(SdcaOptimizerTest):
       predictions = lr.predictions(examples)
       self.assertAllClose(0.693147, unregularized_loss.eval())
       self.assertAllClose(0.693147, loss.eval())
-      for _ in xrange(5):
-        lr.minimize().run()
+      train_op = lr.minimize()
+      for _ in xrange(_MAX_ITERATIONS):
+        train_op.run()
       # The high tolerance in unregularized_loss comparisons is due to the
       # fact that it's possible to trade off unregularized_loss vs.
       # regularization and still have a sum that is quite close to the
@@ -237,7 +214,7 @@ class SdcaWithLogisticLossTest(SdcaOptimizerTest):
       # the regularized_loss is within 0.01 of optimal.
       # 0.525457 is the optimal regularized_loss.
       # 0.411608 is the unregularized_loss at that optimum.
-      self.assertAllClose(0.411608, unregularized_loss.eval(), rtol=0.11)
+      self.assertAllClose(0.411608, unregularized_loss.eval(), atol=0.05)
       self.assertAllClose(0.525457, loss.eval(), atol=0.01)
       predicted_labels = get_binary_predictions_for_logistic(predictions)
       self.assertAllEqual([0, 1], predicted_labels.eval())
@@ -273,10 +250,14 @@ class SdcaWithLogisticLossTest(SdcaOptimizerTest):
       predictions = lr.predictions(examples)
       self.assertAllClose(0.693147, unregularized_loss.eval())
       self.assertAllClose(0.693147, loss.eval())
-      for _ in xrange(5):
-        lr.minimize().run()
-      self.assertAllClose(0.411608, unregularized_loss.eval(), rtol=0.11)
-      self.assertAllClose(0.371705, loss.eval(), atol=0.01)
+      train_op = lr.minimize()
+      for _ in xrange(_MAX_ITERATIONS):
+        train_op.run()
+
+      # There is neither L1 nor L2 loss, so regularized and unregularized losses
+      # should be exactly the same.
+      self.assertAllClose(0.40244, unregularized_loss.eval(), atol=0.01)
+      self.assertAllClose(0.40244, loss.eval(), atol=0.01)
       predicted_labels = get_binary_predictions_for_logistic(predictions)
       self.assertAllEqual([0, 1], predicted_labels.eval())
       self.assertAllClose(0.01,
@@ -319,9 +300,11 @@ class SdcaWithLogisticLossTest(SdcaOptimizerTest):
       unregularized_loss = lr.unregularized_loss(examples)
       loss = lr.regularized_loss(examples)
       predictions = lr.predictions(examples)
-      for _ in xrange(5):
-        lr.minimize().run()
-      self.assertAllClose(0.411608, unregularized_loss.eval(), rtol=0.12)
+      train_op = lr.minimize()
+      for _ in xrange(_MAX_ITERATIONS):
+        train_op.run()
+
+      self.assertAllClose(0.411608, unregularized_loss.eval(), atol=0.05)
       self.assertAllClose(0.525457, loss.eval(), atol=0.01)
       predicted_labels = get_binary_predictions_for_logistic(predictions)
       self.assertAllClose([0, 1, 1, 1], predicted_labels.eval())
@@ -383,11 +366,13 @@ class SdcaWithLogisticLossTest(SdcaOptimizerTest):
       unregularized_loss = lr.unregularized_loss(examples)
       loss = lr.regularized_loss(examples)
       predictions = lr.predictions(examples)
-      for _ in xrange(5):
-        lr.minimize().run()
+      train_op = lr.minimize()
+      for _ in xrange(_MAX_ITERATIONS):
+        train_op.run()
+
       self.assertAllClose(0.226487 + 0.102902,
                           unregularized_loss.eval(),
-                          rtol=0.08)
+                          atol=0.08)
       self.assertAllClose(0.328394 + 0.131364, loss.eval(), atol=0.01)
       predicted_labels = get_binary_predictions_for_logistic(predictions)
       self.assertAllEqual([0, 0, 0, 1], predicted_labels.eval())
@@ -419,9 +404,11 @@ class SdcaWithLogisticLossTest(SdcaOptimizerTest):
       unregularized_loss = lr.unregularized_loss(examples)
       loss = lr.regularized_loss(examples)
       predictions = lr.predictions(examples)
-      for _ in xrange(5):
-        lr.minimize().run()
-      self.assertAllClose(0.284860, unregularized_loss.eval(), rtol=0.08)
+      train_op = lr.minimize()
+      for _ in xrange(_MAX_ITERATIONS):
+        train_op.run()
+
+      self.assertAllClose(0.284860, unregularized_loss.eval(), atol=0.08)
       self.assertAllClose(0.408044, loss.eval(), atol=0.012)
       predicted_labels = get_binary_predictions_for_logistic(predictions)
       self.assertAllEqual([0, 1], predicted_labels.eval())
@@ -453,9 +440,10 @@ class SdcaWithLogisticLossTest(SdcaOptimizerTest):
       unregularized_loss = lr.unregularized_loss(examples)
       loss = lr.regularized_loss(examples)
       predictions = lr.predictions(examples)
-      for _ in xrange(5):
-        lr.minimize().run()
-      self.assertAllClose(0.411608, unregularized_loss.eval(), rtol=0.12)
+      train_op = lr.minimize()
+      for _ in xrange(_MAX_ITERATIONS):
+        train_op.run()
+      self.assertAllClose(0.411608, unregularized_loss.eval(), atol=0.05)
       self.assertAllClose(0.525457, loss.eval(), atol=0.01)
       predicted_labels = get_binary_predictions_for_logistic(predictions)
       self.assertAllEqual([0, 0], predicted_labels.eval())
@@ -464,6 +452,8 @@ class SdcaWithLogisticLossTest(SdcaOptimizerTest):
                           rtol=1e-2,
                           atol=1e-2)
 
+  # TODO(katsiaspis): add a test for the case when examples at the end of an
+  # epoch are repeated, since example id may be duplicated.
 
 class SdcaWithLinearLossTest(SdcaOptimizerTest):
   """SDCA optimizer test class for linear (squared) loss."""
@@ -489,9 +479,9 @@ class SdcaWithLinearLossTest(SdcaOptimizerTest):
       lr = SdcaModel(CONTAINER, examples, variables, options)
       tf.initialize_all_variables().run()
       predictions = lr.predictions(examples)
-
-      for _ in xrange(20):
-        lr.minimize().run()
+      train_op = lr.minimize()
+      for _ in xrange(_MAX_ITERATIONS):
+        train_op.run()
 
       # Predictions should be 2/3 of label due to minimizing regularized loss:
       #   (label - 2 * weight)^2 / 2 + L2 * 2 * weight^2
@@ -533,8 +523,9 @@ class SdcaWithLinearLossTest(SdcaOptimizerTest):
       tf.initialize_all_variables().run()
       predictions = lr.predictions(examples)
 
-      for _ in xrange(5):
-        lr.minimize().run()
+      train_op = lr.minimize()
+      for _ in xrange(_MAX_ITERATIONS):
+        train_op.run()
 
       # Predictions should be 1/5 of label due to minimizing regularized loss:
       #   (label - 2 * weight)^2 + L2 * 16 * weight^2
@@ -567,8 +558,9 @@ class SdcaWithLinearLossTest(SdcaOptimizerTest):
       prediction = lr.predictions(examples)
       loss = lr.regularized_loss(examples)
 
-      for _ in xrange(5):
-        lr.minimize().run()
+      train_op = lr.minimize()
+      for _ in xrange(_MAX_ITERATIONS):
+        train_op.run()
 
       # Predictions should be -4.0, 48/5 due to minimizing regularized loss:
       #   (label - 2 * weight)^2 / 2 + L2 * 2 * weight^2 + L1 * 4 * weight
@@ -601,8 +593,9 @@ class SdcaWithLinearLossTest(SdcaOptimizerTest):
       tf.initialize_all_variables().run()
       predictions = lr.predictions(examples)
 
-      for _ in xrange(20):
-        lr.minimize().run()
+      train_op = lr.minimize()
+      for _ in xrange(_MAX_ITERATIONS):
+        train_op.run()
 
       # Predictions should be 8/9 of label due to minimizing regularized loss:
       #   (label - 2 * 2 * weight)^2 / 2 + L2 * 2 * weight^2
@@ -624,8 +617,9 @@ class SdcaWithLinearLossTest(SdcaOptimizerTest):
       tf.initialize_all_variables().run()
       predictions = lr.predictions(examples)
 
-      for _ in xrange(20):
-        lr.minimize().run()
+      train_op = lr.minimize()
+      for _ in xrange(_MAX_ITERATIONS):
+        train_op.run()
 
       # Predictions should be 4/5 of label due to minimizing regularized loss:
       #   (label - 2 * weight)^2 / 2 + L2 * weight^2
@@ -674,12 +668,13 @@ class SdcaWithHingeLossTest(SdcaOptimizerTest):
       # and w4). Solving the system w1 + w3 = 1.0, w2 + w4 = -1.0 and minimizing
       # wrt to \|\vec{w}\|_2, gives w1=w3=1/2 and w2=w4=-1/2. This gives 0.0
       # unregularized loss and 0.25 L2 loss.
-      for _ in xrange(5):
-        model.minimize().run()
+      train_op = model.minimize()
+      for _ in xrange(_MAX_ITERATIONS):
+        train_op.run()
 
       binary_predictions = get_binary_predictions_for_hinge(predictions)
       self.assertAllEqual([-1.0, 1.0], predictions.eval())
-      self.assertAllEqual([0.0, 1.0], binary_predictions.eval())
+      self.assertAllEqual([0, 1], binary_predictions.eval())
       self.assertAllClose(0.0, unregularized_loss.eval())
       self.assertAllClose(0.25, regularized_loss.eval(), atol=0.05)
 
@@ -698,11 +693,12 @@ class SdcaWithHingeLossTest(SdcaOptimizerTest):
       predictions = model.predictions(examples)
       binary_predictions = get_binary_predictions_for_hinge(predictions)
 
-      for _ in xrange(5):
-        model.minimize().run()
+      train_op = model.minimize()
+      for _ in xrange(_MAX_ITERATIONS):
+        train_op.run()
 
       self.assertAllClose([1.0, -1.0], predictions.eval(), atol=0.05)
-      self.assertAllClose([1.0, 0.0], binary_predictions.eval())
+      self.assertAllEqual([1, 0], binary_predictions.eval())
 
       # (1.0, 1.0) and (1.0, -1.0) are perfectly separable by x-axis (that is,
       # the SVM's functional margin >=1), so the unregularized loss is ~0.0.
@@ -728,15 +724,16 @@ class SdcaWithHingeLossTest(SdcaOptimizerTest):
       predictions = model.predictions(examples)
       binary_predictions = get_binary_predictions_for_hinge(predictions)
 
-      for _ in xrange(5):
-        model.minimize().run()
+      train_op = model.minimize()
+      for _ in xrange(_MAX_ITERATIONS):
+        train_op.run()
 
       # (1.0, 0.5) and (1.0, -0.5) are separable by x-axis but the datapoints
       # are within the margins so there is unregularized loss (1/2 per example).
       # For these datapoints, optimal weights are w_1~=0.0 and w_2~=1.0 which
       # gives an L2 loss of ~0.25.
       self.assertAllClose([0.5, -0.5], predictions.eval(), rtol=0.05)
-      self.assertAllClose([1.0, 0.0], binary_predictions.eval())
+      self.assertAllEqual([1, 0], binary_predictions.eval())
       unregularized_loss = model.unregularized_loss(examples)
       regularized_loss = model.regularized_loss(examples)
       self.assertAllClose(0.5, unregularized_loss.eval(), atol=0.02)
@@ -756,8 +753,9 @@ class SdcaWithHingeLossTest(SdcaOptimizerTest):
       tf.initialize_all_variables().run()
       predictions = model.predictions(examples)
       binary_predictions = get_binary_predictions_for_hinge(predictions)
-      for _ in xrange(5):
-        model.minimize().run()
+      train_op = model.minimize()
+      for _ in xrange(_MAX_ITERATIONS):
+        train_op.run()
 
       # Point (1.0, 0.5) has higher weight than (1.0, -0.5) so the model will
       # try to increase the margin from (1.0, 0.5). Due to regularization,
@@ -767,7 +765,7 @@ class SdcaWithHingeLossTest(SdcaOptimizerTest):
       # correct, but the boundary will be much closer to the 2nd point than the
       # first one.
       self.assertAllClose([1.0, -0.2], predictions.eval(), atol=0.05)
-      self.assertAllClose([1.0, 0.0], binary_predictions.eval(), atol=0.05)
+      self.assertAllEqual([1, 0], binary_predictions.eval())
       unregularized_loss = model.unregularized_loss(examples)
       regularized_loss = model.regularized_loss(examples)
       self.assertAllClose(0.2, unregularized_loss.eval(), atol=0.02)

@@ -23,8 +23,8 @@ option java_package = "org.tensorflow.distruntime";
 
 import "tensorflow/core/framework/device_attributes.proto";
 import "tensorflow/core/framework/graph.proto";
-import "tensorflow/core/framework/tensor.proto";
 import "tensorflow/core/protobuf/config.proto";
+import "tensorflow/core/protobuf/named_tensor.proto";
 
 ////////////////////////////////////////////////////////////////////////////////
 //
@@ -103,20 +103,6 @@ message ExtendSessionResponse {
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-// A pair of tensor name and tensor values.
-message NamedTensorProto {
-  // Name of the tensor.
-  string name = 1;
-
-  // The client can populate a TensorProto using a tensorflow::Tensor`, or
-  // directly using the protobuf field accessors.
-  //
-  // The client specifies whether the returned tensor values should be
-  // filled tensor fields (float_val, int_val, etc.) or encoded in a
-  // compact form in tensor.tensor_content.
-  TensorProto tensor = 2;
-}
-
 message RunStepRequest {
   // REQUIRED: session_handle must be returned by a CreateSession call
   // to the same master service.
@@ -133,6 +119,9 @@ message RunStepRequest {
   // Target Nodes. A list of node names. The named nodes will be run
   // to but their outputs will not be fetched.
   repeated string target = 4;
+
+  // Options for the run call.
+  RunOptions options = 5;
 }
 
 message RunStepResponse {
@@ -140,7 +129,8 @@ message RunStepResponse {
   // the fetch order specified in RunStepRequest.
   repeated NamedTensorProto tensor = 1;
 
-  // TODO(mrry): Optionally aggregate StepStats in some form here.
+  // Returned metadata if requested in the options.
+  RunMetadata metadata = 2;
 }
 
 ////////////////////////////////////////////////////////////////////////////////

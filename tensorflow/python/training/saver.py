@@ -48,7 +48,7 @@ from tensorflow.python.ops import io_ops
 from tensorflow.python.ops import state_ops
 from tensorflow.python.ops import variables
 from tensorflow.python.platform import gfile
-from tensorflow.python.platform import logging
+from tensorflow.python.platform import tf_logging as logging
 from tensorflow.python.training import training_util
 from tensorflow.python.training.checkpoint_state_pb2 import CheckpointState
 from tensorflow.python.util import compat
@@ -260,12 +260,10 @@ class BaseSaverBuilder(object):
             shape = array_ops.shape(v)
           values = array_ops.reshape(values, shape)
 
-      # Assign on the same device as the variable.
       validate_shape = not reshape and v.get_shape().is_fully_defined()
-      with ops.colocate_with(v):
-        assign_ops.append(state_ops.assign(v,
-                                           values,
-                                           validate_shape=validate_shape))
+      assign_ops.append(state_ops.assign(v,
+                                         values,
+                                         validate_shape=validate_shape))
 
     # Create a Noop that has control dependencies from all the updates.
     return control_flow_ops.group(*assign_ops, name=name)
@@ -404,8 +402,9 @@ class BaseSaverBuilder(object):
           if slice_name is None:
             slice_name = variable._save_slice_info.full_name
           elif slice_name != variable._save_slice_info.full_name:
-            raise ValueError("Slices must all be from the same tensor: %s != %s"
-                             % (slice_name, variable._save_slice_info.full_name))
+            raise ValueError(
+                "Slices must all be from the same tensor: %s != %s"
+                % (slice_name, variable._save_slice_info.full_name))
           self._AddVarToSave(vars_to_save, seen_variables,
                              variable, variable._save_slice_info.spec, name)
         # pylint: enable=protected-access
@@ -980,7 +979,7 @@ class Saver(object):
     self._last_checkpoints = last_checkpoints_with_time
 
   def save(self, sess, save_path, global_step=None, latest_filename=None,
-           meta_graph_suffix="meta"):
+           meta_graph_suffix="meta", write_meta_graph=True):
     """Saves variables.
 
     This method runs the ops added by the constructor for saving variables.
@@ -1003,6 +1002,8 @@ class Saver(object):
         managed by the saver to keep track of recent checkpoints.  Defaults to
         'checkpoint'.
       meta_graph_suffix: Suffix for `MetaGraphDef` file. Defaults to 'meta'.
+      write_meta_graph: `Boolean` indicating whether or not to write the meta
+        graph file.
 
     Returns:
       A string: path at which the variables were saved.  If the saver is
@@ -1037,10 +1038,11 @@ class Saver(object):
                                     meta_graph_suffix=meta_graph_suffix)
     update_checkpoint_state(save_path, model_checkpoint_path,
                             self.last_checkpoints, latest_filename)
-    meta_graph_filename = self._MetaGraphFilename(
-        checkpoint_file, meta_graph_suffix=meta_graph_suffix)
-    with sess.graph.as_default():
-      self.export_meta_graph(meta_graph_filename)
+    if write_meta_graph:
+      meta_graph_filename = self._MetaGraphFilename(
+          checkpoint_file, meta_graph_suffix=meta_graph_suffix)
+      with sess.graph.as_default():
+        self.export_meta_graph(meta_graph_filename)
 
     return model_checkpoint_path
 
@@ -1203,7 +1205,7 @@ def _as_meta_graph_def(meta_info_def=None, graph_def=None, saver_def=None,
   """
   # Type check.
   if meta_info_def and not isinstance(meta_info_def,
-                                      meta_graph_pb2.MetaInfoDef):
+                                      meta_graph_pb2.MetaGraphDef.MetaInfoDef):
     raise TypeError("meta_info_def must be of type MetaInfoDef, not %s",
                     type(meta_info_def))
   if graph_def and not isinstance(graph_def, graph_pb2.GraphDef):
@@ -1246,7 +1248,7 @@ def _as_meta_graph_def(meta_info_def=None, graph_def=None, saver_def=None,
   return meta_graph_def
 
 
-def _read_meta_graph_file(filename):
+def read_meta_graph_file(filename):
   """Reads a file containing `MetaGraphDef` and returns the protocol buffer.
 
   Args:
@@ -1283,7 +1285,7 @@ def _read_meta_graph_file(filename):
 
 
 def _import_meta_graph_def(meta_graph_def):
-  """Recreates a Graph saved in a a `MetaGraphDef` proto.
+  """Recreates a Graph saved in a `MetaGraphDef` proto.
 
   This function adds all the nodes from the meta graph def proto to the current
   graph, recreates all the collections, and returns a saver from saver_def.
@@ -1292,7 +1294,10 @@ def _import_meta_graph_def(meta_graph_def):
     meta_graph_def: `MetaGraphDef` protocol buffer.
 
   Returns:
-    A saver constructed rom `saver_def` in `meta_graph_def`.
+    A saver constructed from `saver_def` in `meta_graph_def` or None.
+
+    A None value is returned if no variables exist in the `meta_graph_def`
+    (i.e., no variables to restore).
   """
   # Gathers the list of nodes we are interested in.
   importer.import_graph_def(meta_graph_def.graph_def, name="")
@@ -1331,7 +1336,14 @@ def _import_meta_graph_def(meta_graph_def):
   if meta_graph_def.HasField("saver_def"):
     return Saver(saver_def=meta_graph_def.saver_def)
   else:
-    return Saver()
+    if variables.all_variables():
+      # Return the default saver instance for all graph variables.
+      return Saver()
+    else:
+      # If not graph variables exist, then a Saver cannot be constructed.
+      logging.info("Saver not created because there are no variables in the"
+                   " graph to restore")
+      return None
 
 
 def import_meta_graph(meta_graph_or_file):
@@ -1375,7 +1387,7 @@ def import_meta_graph(meta_graph_or_file):
   with tf.Session() as sess:
     new_saver = tf.train.import_meta_graph('my-save-dir/my-model-10000.meta')
     new_saver.restore(sess, 'my-save-dir/my-model-10000')
-    # tf.get_collection() retrurns a list. In this example we only want the
+    # tf.get_collection() returns a list. In this example we only want the
     # first one.
     train_op = tf.get_collection('train_op')[0]
     for step in xrange(1000000):
@@ -1390,12 +1402,15 @@ def import_meta_graph(meta_graph_or_file):
       the path) containing a `MetaGraphDef`.
 
   Returns:
-    A saver constructed rom `saver_def` in `MetaGraphDef`.
+    A saver constructed from `saver_def` in `MetaGraphDef` or None.
+
+    A None value is returned if no variables exist in the `MetaGraphDef`
+    (i.e., there are no variables to restore).
   """
   if isinstance(meta_graph_or_file, meta_graph_pb2.MetaGraphDef):
     return _import_meta_graph_def(meta_graph_or_file)
   else:
-    return _import_meta_graph_def(_read_meta_graph_file(meta_graph_or_file))
+    return _import_meta_graph_def(read_meta_graph_file(meta_graph_or_file))
 
 
 def export_meta_graph(filename=None, meta_info_def=None, graph_def=None,

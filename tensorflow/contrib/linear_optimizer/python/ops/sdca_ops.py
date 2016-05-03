@@ -17,44 +17,33 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import os.path
-import threading
 import uuid
 
-from six.moves import range
+from six.moves import range  # pylint: disable=redefined-builtin
 
+from tensorflow.contrib.linear_optimizer.ops import gen_sdca_ops
 from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import ops
 from tensorflow.python.framework.load_library import load_op_library
 from tensorflow.python.framework.ops import convert_to_tensor
 from tensorflow.python.framework.ops import name_scope
+from tensorflow.python.framework.ops import op_scope
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import control_flow_ops
 from tensorflow.python.ops import math_ops
+from tensorflow.python.ops import state_ops
 from tensorflow.python.ops import variables as var_ops
 from tensorflow.python.ops.nn import sigmoid_cross_entropy_with_logits
 from tensorflow.python.platform import resource_loader
 
 __all__ = ['SdcaModel']
 
-_sdca_ops = None
-_sdca_ops_lock = threading.Lock()
+_sdca_ops = load_op_library(resource_loader.get_path_to_datafile(
+    '_sdca_ops.so'))
+assert _sdca_ops, 'Could not load _sdca_ops.so'
 
 
-# Workaround for the fact that importing tensorflow imports contrib
-# (even if a user isn't using this or any other contrib op), but
-# there's not yet any guarantee that the shared object exists.
-# In which case, "import tensorflow" will always crash, even for users that
-# never use contrib.
-def _maybe_load_sdca_ops():
-  with _sdca_ops_lock:
-    global _sdca_ops
-    if not _sdca_ops:
-      _sdca_ops = load_op_library(os.path.join(
-          resource_loader.get_data_files_path(), '_sdca_ops.so'))
-      assert _sdca_ops, 'Could not load _sdca_ops.so'
-
-
+# TODO(sibyl-Aix6ihai): add op_scope to appropriate methods.
 class SdcaModel(object):
   """Stochastic dual coordinate ascent solver for linear models.
 
@@ -120,8 +109,6 @@ class SdcaModel(object):
   def __init__(self, container, examples, variables, options):
     """Create a new sdca optimizer."""
 
-    _maybe_load_sdca_ops()
-
     if not container or not examples or not variables or not options:
       raise ValueError('All arguments must be specified.')
 
@@ -160,7 +147,7 @@ class SdcaModel(object):
     # Algorithmic requirement (for now) is to have minimal l2 of 1.0
     return max(self._options['symmetric_l2_regularization'], 1.0)
 
-  # TODO(rohananil): Use optimizer interface to make use of slot creation logic.
+  # TODO(sibyl-Aix6ihai): Use optimizer interface to make use of slot creation logic.
   def _create_slots(self):
     # Make internal variables which have the updates before applying L1
     # regularization.
@@ -201,7 +188,7 @@ class SdcaModel(object):
         for weights in self._convert_n_to_tensor(self._variables[name]):
           sum += math_ops.reduce_sum(math_ops.square(weights))
       # SDCA L2 regularization cost is: l2 * sum(weights^2) / 2
-      return l2 * sum / 2
+      return l2 * sum / 2.0
 
   def _convert_n_to_tensor(self, input_list, as_ref=False):
     """Converts input list to a set of tensors."""
@@ -212,22 +199,24 @@ class SdcaModel(object):
     with name_scope('sdca/prediction'):
       sparse_variables = self._convert_n_to_tensor(self._variables[
           'sparse_features_weights'])
-      predictions = 0
+      result = 0.0
       for st_i, sv in zip(examples['sparse_features'], sparse_variables):
         ei, fi = array_ops.split(1, 2, st_i.indices)
         ei = array_ops.reshape(ei, [-1])
         fi = array_ops.reshape(fi, [-1])
         fv = array_ops.reshape(st_i.values, [-1])
-        # TODO(rohananil): This does not work if examples have empty features.
-        predictions += math_ops.segment_sum(
-            math_ops.mul(
-                array_ops.gather(sv, fi), fv), array_ops.reshape(ei, [-1]))
+        # TODO(sibyl-Aix6ihai): This does not work if examples have empty features.
+        result += math_ops.segment_sum(
+            math_ops.mul(array_ops.gather(sv, fi), fv), ei)
       dense_features = self._convert_n_to_tensor(examples['dense_features'])
       dense_variables = self._convert_n_to_tensor(self._variables[
           'dense_features_weights'])
+
       for i in range(len(dense_variables)):
-        predictions += dense_features[i] * dense_variables[i]
-    return predictions
+        result += dense_features[i] * dense_variables[i]
+
+    # Reshaping to allow shape inference at graph construction time.
+    return array_ops.reshape(result, [-1])
 
   def predictions(self, examples):
     """Add operations to compute predictions by the model.
@@ -248,20 +237,27 @@ class SdcaModel(object):
         ['example_weights', 'sparse_features', 'dense_features'], examples)
     self._assertList(['sparse_features', 'dense_features'], examples)
 
-    predictions = self._linear_predictions(examples)
+    result = self._linear_predictions(examples)
     if self._options['loss_type'] == 'logistic_loss':
       # Convert logits to probability for logistic loss predictions.
       with name_scope('sdca/logistic_prediction'):
-        predictions = math_ops.sigmoid(predictions)
-    return predictions
+        result = math_ops.sigmoid(result)
+    return result
 
-  def minimize(self):
+  def minimize(self, global_step=None, name=None):
     """Add operations to train a linear model by minimizing the loss function.
+
+    Args:
+      global_step: Optional `Variable` to increment by one after the
+        variables have been updated.
+      name: Optional name for the returned operation.
 
     Returns:
       An Operation that updates the variables passed in the constructor.
     """
-    with name_scope('sdca/minimize'):
+    # Technically, the op depends on a lot more than the variables,
+    # but we'll keep the list short.
+    with op_scope([], name, 'sdca/minimize'):
       sparse_features_indices = []
       sparse_features_values = []
       for sf in self._examples['sparse_features']:
@@ -283,7 +279,7 @@ class SdcaModel(object):
               as_ref=True),
           l1=self._options['symmetric_l1_regularization'],
           l2=self._symmetric_l2_regularization(),
-          # TODO(rohananil): Provide empirical evidence for this. It is better
+          # TODO(sibyl-Aix6ihai): Provide empirical evidence for this. It is better
           # to run more than one iteration on single mini-batch as we want to
           # spend more time in compute. SDCA works better with larger
           # mini-batches and there is also recent work that shows its better to
@@ -301,7 +297,7 @@ class SdcaModel(object):
             assign_ops.append(var.assign(slot_var))
         assign_group = control_flow_ops.group(*assign_ops)
         with ops.control_dependencies([assign_group]):
-          return _sdca_ops.sdca_shrink_l1(
+          shrink_l1 = _sdca_ops.sdca_shrink_l1(
               self._convert_n_to_tensor(
                   self._variables['sparse_features_weights'],
                   as_ref=True),
@@ -310,6 +306,10 @@ class SdcaModel(object):
                   as_ref=True),
               l1=self._options['symmetric_l1_regularization'],
               l2=self._symmetric_l2_regularization())
+      if not global_step:
+        return shrink_l1
+      with ops.control_dependencies([shrink_l1]):
+        return state_ops.assign_add(global_step, 1, name=name).op
 
   def approximate_duality_gap(self):
     """Add operations to compute the approximate duality gap.

@@ -1,5 +1,5 @@
 # Description:
-#   Contains ops to train linear models on top of TensorFlow.
+#   Contains ops for statistical distributions (with pdf, cdf, sample, etc...).
 #   APIs here are meant to evolve over time.
 
 licenses(["notice"])  # Apache 2.0
@@ -17,7 +17,18 @@ py_library(
 )
 
 cuda_py_tests(
+    name = "dirichlet_multinomial_test",
+    srcs = ["python/kernel_tests/dirichlet_multinomial_test.py"],
+    additional_deps = [
+        ":distributions_py",
+        "//tensorflow/python:framework_test_lib",
+        "//tensorflow/python:platform_test",
+    ],
+)
+
+cuda_py_tests(
     name = "gaussian_test",
+    size = "small",
     srcs = ["python/kernel_tests/gaussian_test.py"],
     additional_deps = [
         ":distributions_py",
@@ -27,7 +38,19 @@ cuda_py_tests(
 )
 
 cuda_py_tests(
+    name = "mvn_test",
+    size = "small",
+    srcs = ["python/kernel_tests/mvn_test.py"],
+    additional_deps = [
+        ":distributions_py",
+        "//tensorflow/python:framework_test_lib",
+        "//tensorflow/python:platform_test",
+    ],
+)
+
+cuda_py_tests(
     name = "gaussian_conjugate_posteriors_test",
+    size = "small",
     srcs = ["python/kernel_tests/gaussian_conjugate_posteriors_test.py"],
     additional_deps = [
         ":distributions_py",

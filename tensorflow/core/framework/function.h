@@ -24,6 +24,7 @@ limitations under the License.
 #include "tensorflow/core/framework/graph.pb.h"
 #include "tensorflow/core/framework/node_def_util.h"
 #include "tensorflow/core/framework/op.h"
+#include "tensorflow/core/framework/selective_registration.h"
 #include "tensorflow/core/framework/types.h"
 #include "tensorflow/core/platform/macros.h"
 #include "tensorflow/core/platform/protobuf.h"
@@ -257,6 +258,17 @@ class FunctionLibraryDefinition : public OpRegistryInterface {
   // returns its definition proto.
   const FunctionDef* Find(const string& func) const;
 
+  // Adds function definition 'fdef' to this function library.
+  // Returns status 'ok' on success, or error otherwise.
+  // If 'fdef' is successfully added to the library, it will be accessible
+  // from 'LookUp' and included in the proto returned by 'ToProto'.
+  Status AddFunctionDef(const FunctionDef& fdef);
+
+  // If the gradient function for 'func' is specified explicitly in
+  // the library, returns the gradient function name.  Otherwise,
+  // returns an empty string.
+  string FindGradient(const string& func) const;
+
   // OpRegistryInterface method. Useful for constructing a Graph.
   //
   // If "op" is defined in the library, returns its signature.
@@ -264,14 +276,21 @@ class FunctionLibraryDefinition : public OpRegistryInterface {
   // signature.
   const OpDef* LookUp(const string& op, Status* status) const override;
 
+  // Returns a proto representation of the state of this function library.
+  FunctionDefLibrary ToProto() const;
+
  private:
   std::unordered_map<string, FunctionDef> function_defs_;
+  std::unordered_map<string, string> func_grad_;
 
   TF_DISALLOW_COPY_AND_ASSIGN(FunctionLibraryDefinition);
 };
 
 // Forward declare. Defined in common_runtime/function.h
 struct FunctionBody;
+
+// Forward declare. Defined in common_runtime/device.h
+class Device;
 
 class FunctionLibraryRuntime {
  public:
@@ -321,6 +340,9 @@ class FunctionLibraryRuntime {
 
   // Return true iff 'function' is stateful.
   virtual bool IsStateful(const string& function_name) = 0;
+
+  // Return the device on which the function executes.
+  virtual Device* device() = 0;
 };
 
 // To register a gradient function for a builtin op, one should use
@@ -377,8 +399,9 @@ class FunctionLibraryRuntime {
 #define REGISTER_OP_GRADIENT_UNIQ_HELPER(ctr, name, fn) \
   REGISTER_OP_GRADIENT_UNIQ(ctr, name, fn)
 
-#define REGISTER_OP_GRADIENT_UNIQ(ctr, name, fn) \
-  static bool unused_grad_##ctr = ::tensorflow::gradient::RegisterOp(name, fn)
+#define REGISTER_OP_GRADIENT_UNIQ(ctr, name, fn)                 \
+  static bool unused_grad_##ctr = SHOULD_REGISTER_OP_GRADIENT && \
+                                  ::tensorflow::gradient::RegisterOp(name, fn)
 
 namespace gradient {
 // Register a gradient creator for the "op".

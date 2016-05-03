@@ -47,7 +47,7 @@ using tensorflow::Tensor;
 using tensorflow::TensorBuffer;
 using tensorflow::SessionOptions;
 using tensorflow::RunOptions;
-using tensorflow::RunOutputs;
+using tensorflow::RunMetadata;
 using tensorflow::TensorShape;
 
 extern "C" {
@@ -195,9 +195,7 @@ TF_Buffer* TF_NewBufferFromString(const void* proto, size_t proto_len) {
   TF_Buffer* buf = new TF_Buffer;
   buf->data = copy;
   buf->length = proto_len;
-  buf->data_deallocator = [](void* data, size_t length) {
-    delete reinterpret_cast<char*>(data);
-  };
+  buf->data_deallocator = [](void* data, size_t length) { free(data); };
   return buf;
 }
 
@@ -367,7 +365,7 @@ void TF_Run_Helper(TF_Session* s, const char* handle,
                    int noutputs,
                    // Target nodes
                    const char** c_target_node_names, int ntargets,
-                   TF_Buffer* run_outputs, TF_Status* status) {
+                   TF_Buffer* run_metadata, TF_Status* status) {
   status->status = Status::OK();
   for (int i = 0; i < noutputs; i++) {
     c_outputs[i] = NULL;
@@ -414,24 +412,33 @@ void TF_Run_Helper(TF_Session* s, const char* handle,
       result = s->session->Run(inputs, output_tensor_names, target_node_names,
                                &outputs);
     } else {
-      // Prepares (input) RunOptions and (output) RunOutputs params
+      // Prepares (input) RunOptions and (output) RunMetadata params
       RunOptions run_options_proto;
       if (!run_options_proto.ParseFromArray(run_options->data,
                                             run_options->length)) {
         status->status =
             tensorflow::errors::InvalidArgument("Unparseable RunOptions proto");
+        return;
       }
-      RunOutputs run_outputs_proto;
+      if (run_metadata != nullptr && run_metadata->data != nullptr) {
+        status->status = tensorflow::errors::InvalidArgument(
+            "Passing non-empty run_metadata is invalid.");
+        return;
+      }
 
-      result = s->session->Run(run_options_proto, inputs, output_tensor_names,
-                               target_node_names, &outputs, &run_outputs_proto);
+      RunMetadata run_metadata_proto;
+      result =
+          s->session->Run(run_options_proto, inputs, output_tensor_names,
+                          target_node_names, &outputs, &run_metadata_proto);
 
       // Serialize back to upstream client, who now owns the new buffer
-      int proto_size = run_outputs_proto.ByteSize();
-      void* str_buf = reinterpret_cast<void*>(operator new(proto_size));
-      run_outputs_proto.SerializeToArray(str_buf, proto_size);
-      run_outputs->data = str_buf;
-      run_outputs->length = proto_size;
+      if (run_metadata != nullptr) {
+        int proto_size = run_metadata_proto.ByteSize();
+        void* str_buf = reinterpret_cast<void*>(operator new(proto_size));
+        run_metadata_proto.SerializeToArray(str_buf, proto_size);
+        run_metadata->data = str_buf;
+        run_metadata->length = proto_size;
+      }
     }
   } else {
     // NOTE(zongheng): PRun does not support RunOptions yet.
@@ -472,10 +479,10 @@ void TF_Run(TF_Session* s, const TF_Buffer* run_options,
             int noutputs,
             // Target nodes
             const char** c_target_node_names, int ntargets,
-            TF_Buffer* run_outputs, TF_Status* status) {
+            TF_Buffer* run_metadata, TF_Status* status) {
   TF_Run_Helper(s, nullptr, run_options, c_input_names, c_inputs, ninputs,
                 c_output_tensor_names, c_outputs, noutputs, c_target_node_names,
-                ntargets, run_outputs, status);
+                ntargets, run_metadata, status);
 }
 
 void TF_PRunSetup(TF_Session* s,
