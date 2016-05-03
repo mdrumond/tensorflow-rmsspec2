@@ -14,6 +14,9 @@ flags.DEFINE_boolean('fake_data', False, 'If true, uses fake data '
 flags.DEFINE_integer('max_steps', 1000, 'Number of steps to run trainer.')
 flags.DEFINE_float('learning_rate', 0.01, 'Initial learning rate.')
 
+def getTestMatrix():
+    return np.random.randn(25, 20)
+
 def runTestSession(feed,graph,golden_res):
     # Do whatever calculation I want to test (build the graph)
     sess = tf.InteractiveSession()
@@ -27,7 +30,29 @@ def runTestSession(feed,graph,golden_res):
     print("result:")
     print(result)
 
+    print("match? ",np.allclose(golden_res,result, rtol=1e-03, atol=1e-03,))
 
+                     
+
+def test_sharpOp():
+
+    # NumpyArrays
+    inputA = getTestMatrix()
+    print("Inputs:")
+    print(inputA)
+
+    def numpyTest():
+        U, s, V = np.linalg.svd(inputA, full_matrices=False)
+        return np.dot( U, V ) * np.sum(s)
+
+ 
+    tf_inA = tf.placeholder(tf.float32, inputA.shape, name='input1')
+    tf_graph=sharpOp(tf_inA)
+    feed = {tf_inA : inputA}
+    runTestSession(feed,tf_graph,numpyTest())
+
+ 
+    
 def logSoftMax(vector):
     maxLogit= tf.reduce_max(vector,reduction_indices=1,keep_dims=True) # [batch_size]
     lse = tf.log( tf.reduce_sum(tf.exp( vector - maxLogit ), reduction_indices=1, keep_dims=True ) ) + maxLogit
@@ -35,7 +60,7 @@ def logSoftMax(vector):
 
 def test_logSoftMax():
     # NumpyArrays
-    inputA = np.array([[1.,2.,3.],[4.,5.,6.],[7.,8.,9.],[10.,11.,12.]])
+    inputA = getTestMatrix()
 
     print("Inputs:")
     print(inputA)
@@ -181,11 +206,11 @@ def test_tensorboard(_):
 
 
 def test_matrix_comp():
-    def getTestMatrix():
-        return np.random.randn(3, 3) + 1j*np.random.randn(3, 3)
+    def getTestMatrix(transp=False):
+        return np.random.randn(3, 4) if transp else np.random.radn(4,3)
 
     def numpyTestSvd(test_in):
-        U, s, V = np.linalg.svd(test_in, full_matrices=True)
+        U, s, V = np.linalg.svd(test_in, full_matrices=False)
         print("### SVD Test:")
         print("U")
         print(U)
@@ -195,7 +220,7 @@ def test_matrix_comp():
         print(V)
 
     def numpyTestSvdS(test_in):
-        U, s, V = np.linalg.svd(test_in, full_matrices=True)
+        U, s, V = np.linalg.svd(test_in, full_matrices=False)
         return s
 
     def numpyTestQr(test_in):
@@ -205,10 +230,25 @@ def test_matrix_comp():
         print(q)
         print("r")
         print(r)
-    tf_ans = tf.matrix_decomp_svd_s(test_in)
 
+        print("normal")
+        a = getTestMatrix(True)
+        print("a",a.shape,"\n",a)
+        U, s, V = np.linalg.svd(a, full_matrices=False)
+        print("U",U.shape,"\n",U)
+        print("s",s.shape,"\n", s)
+        print("V",V.shape,"\n",V)
+    
+        print("transp")
+        a = getTestMatrix(True)
+        print("a",a.shape,"\n",a)
+        U, s, V = np.linalg.svd(a, full_matrices=False)
+        print("U",U.shape,"\n",U)
+        print("s",s.shape,"\n", s)
+        print("V",V.shape,"\n",V)
+    
 def main(_):
-    test_matrix_comp()
+    test_sharpOp()
 
 if __name__ == '__main__':
     tf.app.run()

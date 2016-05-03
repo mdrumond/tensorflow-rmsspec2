@@ -71,7 +71,7 @@ class MatrixDecompSvdSOp
       return;
     }
     
-    *output = matrix.jacobiSvd().singularValues();
+    *output = matrix.jacobiSvd(Eigen::ComputeThinU | Eigen::ComputeThinV).singularValues();
   }
 
 };
@@ -91,9 +91,12 @@ class MatrixDecompSvdUOp
   ~MatrixDecompSvdUOp() override {}
 
   TensorShape GetOutputMatrixShape(
-      const TensorShape& input_matrix_shape) override {
+                                   const TensorShape& input_matrix_shape) override {
+    const int64 smallDim = (input_matrix_shape.dim_size(0) < input_matrix_shape.dim_size(1))?
+      input_matrix_shape.dim_size(0) : input_matrix_shape.dim_size(1);
+    
     return TensorShape({ input_matrix_shape.dim_size(0),
-          input_matrix_shape.dim_size(0)});
+          smallDim});
   }
 
   int64 GetCostPerUnit(const TensorShape& input_matrix_shape) override {
@@ -127,7 +130,7 @@ class MatrixDecompSvdUOp
       return;
     }
     
-    *output = matrix.jacobiSvd(Eigen::ComputeFullU).matrixU();
+    *output = matrix.jacobiSvd(Eigen::ComputeThinU | Eigen::ComputeThinV).matrixU();
   }
 
 };
@@ -148,8 +151,10 @@ class MatrixDecompSvdVOp
 
   TensorShape GetOutputMatrixShape(
                                    const TensorShape& input_matrix_shape) override {
-    return TensorShape({ input_matrix_shape.dim_size(1),
-          input_matrix_shape.dim_size(1)});
+    const int64 smallDim = (input_matrix_shape.dim_size(0) < input_matrix_shape.dim_size(1))?
+      input_matrix_shape.dim_size(0) : input_matrix_shape.dim_size(1);
+    
+    return TensorShape({ input_matrix_shape.dim_size(1), smallDim });
   }
 
   int64 GetCostPerUnit(const TensorShape& input_matrix_shape) override {
@@ -183,7 +188,7 @@ class MatrixDecompSvdVOp
       return;
     }
     
-    *output = matrix.jacobiSvd(Eigen::ComputeFullV).matrixV().transpose();
+    *output = matrix.jacobiSvd(Eigen::ComputeThinV | Eigen::ComputeThinU).matrixV();
   }
 
 };
@@ -218,7 +223,7 @@ class MatrixDecompQrQOp
       return kint32max;
     } else {
       return 2 * rows * cols;
-    }
+      ;    }
   }
   
   typedef

@@ -73,13 +73,23 @@ class MatrixDecompOpTest(tf.test.TestCase):
             tf_ans_s = tf.matrix_decomp_svd_s(a).eval()
             tf_ans_v = tf.matrix_decomp_svd_v(a).eval()
 
-        full_s = np.zeros((a.shape[0], a.shape[1]), dtype=float)
-        small_dim = min(a.shape[0], a.shape[1])
-        full_s[:small_dim,:small_dim] = np.diag(tf_ans_s)
+        full_s = np.diag(tf_ans_s)
 
-        np_reconstr = np.dot( np.dot(tf_ans_u,  full_s), tf_ans_v )
+        np_reconstr = np.dot( np.dot(tf_ans_u,  full_s), np.transpose(tf_ans_v) )
         self.assertAllClose(a, np_reconstr,atol=1e-5, rtol=1e-5)
 
+    def testSvdTransp(self):
+        a = np.transpose(getTestMatrix())
+        with self.test_session():
+            tf_ans_u = tf.matrix_decomp_svd_u(a).eval()
+            tf_ans_s = tf.matrix_decomp_svd_s(a).eval()
+            tf_ans_v = tf.matrix_decomp_svd_v(a).eval()
+
+        full_s = np.diag(tf_ans_s)
+
+        np_reconstr = np.dot( np.dot(tf_ans_u,  full_s), np.transpose(tf_ans_v) )
+        self.assertAllClose(a, np_reconstr,atol=1e-5, rtol=1e-5)
+        
     def testQr(self):
         a = getTestMatrix()
         np_q, np_r = numpyTestQr(a)

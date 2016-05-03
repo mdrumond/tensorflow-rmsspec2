@@ -39,7 +39,7 @@ from __future__ import print_function
 from datetime import datetime
 import os.path
 import time
-
+import os
 import numpy as np
 from six.moves import xrange  # pylint: disable=redefined-builtin
 import tensorflow as tf
@@ -48,7 +48,7 @@ from tensorflow.models.image.cifar10 import cifar10
 
 FLAGS = tf.app.flags.FLAGS
 
-tf.app.flags.DEFINE_string('train_dir', '/tmp/cifar10_train',
+tf.app.flags.DEFINE_string('train_dir', os.getcwd() + '/cifar10_train',
                            """Directory where to write event logs """
                            """and checkpoint.""")
 tf.app.flags.DEFINE_integer('max_steps', 1000000,
@@ -77,7 +77,7 @@ def train():
     train_op = cifar10.train(loss, global_step)
 
     # Create a saver.
-    saver = tf.train.Saver(tf.all_variables())
+    saver = tf.train.Saver(tf.all_variables(), max_to_keep=None)
 
     # Build the summary operation based on the TF collection of Summaries.
     summary_op = tf.merge_all_summaries()
@@ -117,11 +117,9 @@ def train():
       if step % 100 == 0:
         summary_str = sess.run(summary_op)
         summary_writer.add_summary(summary_str, step)
-
-      # Save the model checkpoint periodically.
-      if step % 1000 == 0 or (step + 1) == FLAGS.max_steps:
         checkpoint_path = os.path.join(FLAGS.train_dir, 'model.ckpt')
-        saver.save(sess, checkpoint_path, global_step=step)
+        save_path = saver.save(sess, checkpoint_path, global_step=step)
+        print("Model saved in file: %s" % save_path)
 
 
 def main(argv=None):  # pylint: disable=unused-argument

@@ -174,12 +174,15 @@ def _MatrixDecompSvdS(op):
 @ops.RegisterShape("MatrixDecompSvdU")
 def _MatrixDecompSvdU(op):
   matrix_shape = op.inputs[0].get_shape().with_rank(2)
-  return [ [matrix_shape[0], matrix_shape[0] ] ]
+  smallDim = min( matrix_shape[0], matrix_shape[1] )   
+  return [ [matrix_shape[0], smallDim ] ]
 
 @ops.RegisterShape("MatrixDecompSvdV")
 def _MatrixDecompSvdV(op):
   matrix_shape = op.inputs[0].get_shape().with_rank(2)
-  return [ [matrix_shape[1], matrix_shape[1]] ]
+  smallDim = min( matrix_shape[0], matrix_shape[1] )
+  # V is transposed
+  return [ [matrix_shape[1] , smallDim] ]
 
 @ops.RegisterShape("MatrixDecompQrQ")
 def _MatrixDecompQrQ(op):

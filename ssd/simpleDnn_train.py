@@ -17,6 +17,9 @@ flags.DEFINE_string('train_dir', 'logs', 'Directory to put the training data.')
 flags.DEFINE_boolean('fake_data', False, 'If true, uses fake data '
                      'for unit testing.')
 
+
+
+
 def placeholder_inputs(batch_size):
     """Generate placeholder variables to represent the input tensors.
     
