@@ -1,10 +1,15 @@
-FROM ubuntu:15.10
+FROM nvidia/cuda:7.5-cudnn4-devel
 
 # Basic docker parsa image: build-essentials, ssh and a parsa user
 RUN apt-get update && apt-get install -y build-essential checkinstall wget python-pip sudo python-dev openssh-server \
-             swig software-properties-common openjdk-8-jdk pkg-config python-numpy zip g++ zlib1g-dev unzip git-all \
+             swig software-properties-common pkg-config python-numpy zip g++ zlib1g-dev unzip git-all \
 	     emacs24-nox python3-numpy python3-dev python3-setuptools screen curl && \
-     mkdir /var/run/sshd && \
+    mkdir /var/run/sshd && \
+    sudo add-apt-repository ppa:openjdk-r/ppa && \
+    sudo apt-get update && \
+    sudo apt-get install -y openjdk-8-jdk && \
+    sudo update-alternatives --config java && \
+    sudo update-alternatives --config javac && \
     echo 'root:root' | chpasswd && \
     echo 'ALL: LOCAL' > /etc/ssh/hosts.allow && \
     sed -i 's/PermitRootLogin without-password/PermitRootLogin yes/' /etc/ssh/sshd_config && \
@@ -17,7 +22,17 @@ RUN apt-get update && apt-get install -y build-essential checkinstall wget pytho
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* && \
     rm /bin/sh && ln -s /bin/bash /bin/sh && \
-    sudo update-ca-certificates -f
+    sudo update-ca-certificates -f 
+
+RUN echo '' | tee -a  /etc/bash.bashrc > /dev/null \
+    && echo 'export PATH=/usr/local/nvidia/bin:/usr/local/cuda/bin:${PATH}' | \
+       tee -a /etc/bash.bashrc > /dev/null \
+    && echo 'export LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/nvidia/lib:/usr/local/nvidia/lib64:${LD_LIBRARY_PATH}' | \
+       tee -a /etc/bash.bashrc > /dev/null && \
+    ln -s /usr/local/nvidia/lib64/libcuda.so.1 /usr/lib/x86_64-linux-gnu/libcuda.so
+
+
+
 
 USER parsa
 ENV HOME /home/parsa
@@ -31,7 +46,12 @@ RUN git config --global user.email "mario.drumond@epfl.ch" && \
     pip3 install --upgrade virtualenv --user && \
     echo 'export PATH=/home/parsa/bazel/output:/home/parsa/.local/bin:$PATH' >> $HOME/.bashrc && \
     cd ~/ && \
-    git clone --recurse-submodules https://github.com/mdrumond/tensorflow.git
+    git clone --recurse-submodules https://github.com/mdrumond/tensorflow.git && \
+    echo '' | tee -a  $HOME/.bashrc > /dev/null && \
+    echo 'export PATH=/usr/local/nvidia/bin:/usr/local/cuda/bin:${PATH}' | \
+       tee -a $HOME/.bashrc > /dev/null && \
+    echo 'export LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/nvidia/lib:/usr/local/nvidia/lib64:${LD_LIBRARY_PATH}' | \
+       tee -a $HOME/.bashrc > /dev/null
 
 
 USER root
