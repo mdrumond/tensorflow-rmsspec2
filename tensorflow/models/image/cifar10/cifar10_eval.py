@@ -95,6 +95,9 @@ def eval_once(saver, summary_writer, top_k_op, summary_op):
       total_sample_count = num_iter * FLAGS.batch_size
       step = 0
       while step < num_iter and not coord.should_stop():
+        tf.train.write_graph(sess.graph_def, FLAGS.eval_dir,
+                             "cifar10_run.pb", False)
+
         predictions = sess.run([top_k_op])
         true_count += np.sum(predictions)
         step += 1

@@ -53,7 +53,7 @@ tf.app.flags.DEFINE_string('train_dir', os.getcwd() + '/cifar10_train',
                            """and checkpoint.""")
 tf.app.flags.DEFINE_integer('max_steps', 1000000,
                             """Number of batches to run.""")
-tf.app.flags.DEFINE_boolean('log_device_placement', True,
+tf.app.flags.DEFINE_boolean('log_device_placement', False,
                             """Whether to log device placement.""")
 
 
@@ -88,6 +88,9 @@ def train():
     # Start running operations on the Graph.
     sess = tf.Session(config=tf.ConfigProto(
         log_device_placement=FLAGS.log_device_placement))
+    
+    tf.train.write_graph(sess.graph_def, FLAGS.train_dir,
+                         "cifar10_train.pb", False)
     sess.run(init)
 
     # Start the queue runners.
