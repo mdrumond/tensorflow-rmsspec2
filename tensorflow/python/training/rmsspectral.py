@@ -73,16 +73,21 @@ class RMSSpectralOptimizer(training.rmsprop.RMSPropOptimizer):
         rms = self.get_slot(var, "rms")
         mom = self.get_slot(var, "momentum")
 
-        rms_update = rms.assign(self._decay_tensor * rms +
-                                (1 - self._decay_tensor) *
-                                math_ops.square(grad))
+        momentum = math_ops.cast(self._momentum_tensor, var.dtype.base_dtype)
+        lr = math_ops.cast(self._learning_rate_tensor, var.dtype.base_dtype)
+        decay = math_ops.cast(self._decay_tensor, var.dtype.base_dtype)
+        epsilon = math_ops.cast(self._epsilon_tensor, var.dtype.base_dtype)
 
-        aux = math_ops.sqrt(math_ops.sqrt(rms_update)+self._epsilon_tensor)
-        update = (self._learning_rate_tensor *
+        rms_update = rms.assign(decay * rms +
+                                (1 - decay) *
+                                math_ops.square(grad))
+        aux = math_ops.sqrt(math_ops.sqrt(rms_update)+epsilon)
+        update = (lr *
                   (self._sharpOp(grad / aux) /
                    aux))
-        mom_update = mom.assign(mom*self._momentum_tensor + update)
-        var_update = var.assign_sub(mom)
+
+        mom_update = mom.assign(mom * momentum + update)
+        var_update = var.assign_sub(mom_update)
 
         return control_flow_ops.group(*[var_update, rms_update, mom_update])
 
