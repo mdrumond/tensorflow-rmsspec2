@@ -13,7 +13,7 @@
 # limitations under the License.
 # ==============================================================================
 
-"""One-line documentation for rmsprop module.
+"""One-line documentation for rmsspectral module.
 
 rmsprop algorithm [tieleman2012rmsprop]
 
@@ -32,21 +32,22 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-from tensorflow.python.framework import ops
-from tensorflow.python.ops import constant_op
-from tensorflow.python.training import optimizer
-from tensorflow.python.training import training_ops
+from tensorflow.python.ops import math_ops
+from tensorflow.python.ops import control_flow_ops
+from tensorflow.python.ops import linalg_ops
+from tensorflow.python.ops import array_ops
+from tensorflow.python import training
 
 
-class RMSSpectralOptimizer(optimizer.Optimizer):
+class RMSSpectralOptimizer(training.rmsprop.RMSPropOptimizer):
     """Optimizer that implements the RMSSpectral algorithm.
-    
+
     See the [paper]
     (http://papers.nips.cc/paper/5795-preconditioned-spectral-descent-for-deep-learning.pdf).
-    
+
     @@__init__
     """
-    
+
     def __init__(self,
                  learning_rate,
                  decay=0.9,
@@ -54,73 +55,47 @@ class RMSSpectralOptimizer(optimizer.Optimizer):
                  epsilon=1e-10,
                  use_locking=False,
                  name="RMSSpectral"):
-        """Construct a new RMSSpectral optimizer.
+        super(RMSSpectralOptimizer, self).__init__(learning_rate, decay,
+                                                   momentum, epsilon,
+                                                   use_locking, name)
 
-        Args:
-        learning_rate: A Tensor or a floating point value.  The learning rate.
-        decay: Discounting factor for the history/coming gradient
-        momentum: A scalar tensor.
-        epsilon: Small value to avoid zero denominator.
-        use_locking: If True use locks for update operation.
-        name: Optional name prefix for the operations created when applying
-        gradients. Defaults to "RMSSpectral".
-        """
-        super(RMSSpectralOptimizer, self).__init__(use_locking, name)
-        self._learning_rate = learning_rate
-        self._decay = decay
-        self._momentum = momentum
-        self._epsilon = epsilon
-        
-        # Tensors for learning rate and momentum.  Created in _prepare.
-        self._learning_rate_tensor = None
-        self._decay_tensor = None
-        self._momentum_tensor = None
-        self._epsilon_tensor = None
-        
-    def _sharpOp(self,vector):
-        u = tf.matrix_decomp_svd_u(vector)
-        s = tf.matrix_decomp_svd_s(vector)
-        v = tf.matrix_decomp_svd_v(vector)
+    def _sharpOp(self, vector):
+        u = linalg_ops.matrix_decomp_svd_u(vector)
+        s = linalg_ops.matrix_decomp_svd_s(vector)
+        v = linalg_ops.matrix_decomp_svd_v(vector)
 
-        return tf.matmul(u,tf.transpose(v))*tf.reduce_sum(s)
+        return (math_ops.matmul(u, array_ops.transpose(v)) *
+                math_ops.reduce_sum(s))
 
-    def _apply_rms_spectral(self,var,rms,mom,learning_rate,
-                            decay,momentum,epislon,alpha):
+    def _apply_rms_spectral(self, grad, var):
         # see if variable updates need something special
         # might have to resize the variables (they are suposedly flat)
-        rms.assign(alpha * rms + (1 - alpha) * grad)
-        aux = ops.sqrt(ops.sqrt(rms)+epsilon)
-        var.assign_sub(-learning_rate * ops.div(_sharpOp(ops.div(grad,aux)),aux))
-      
-    def _create_slots(self, var_list):
-        for v in var_list:
-            val = constant_op.constant(1.0, dtype=v.dtype, shape=v.get_shape())
-            self._get_or_make_slot(v, val, "rms", self._name)
-            self._zeros_slot(v, "momentum", self._name)
+        rms = self.get_slot(var, "rms")
+        mom = self.get_slot(var, "momentum")
 
-    def _prepare(self):
-        self._learning_rate_tensor = ops.convert_to_tensor(self._learning_rate,
-                                                           name="learning_rate")
-        self._decay_tensor = ops.convert_to_tensor(self._decay, name="decay")
-        self._momentum_tensor = ops.convert_to_tensor(self._momentum,
-                                                      name="momentum")
-        self._epsilon_tensor = ops.convert_to_tensor(self._epsilon,
-                                                     name="epsilon")
+        rms_update = rms.assign(self._decay_tensor * rms +
+                                (1 - self._decay_tensor) *
+                                math_ops.square(grad))
+
+        aux = math_ops.sqrt(math_ops.sqrt(rms_update)+self._epsilon_tensor)
+        update = (self._learning_rate_tensor *
+                  (self._sharpOp(grad / aux) /
+                   aux))
+        mom_update = mom.assign(mom*self._momentum_tensor + update)
+        var_update = var.assign_sub(mom)
+
+        return control_flow_ops.group(*[var_update, rms_update, mom_update])
 
     def _apply_dense(self, grad, var):
         # what about bias???
         # check var shapes (might not work if this thing is flat):
         # 2 dims - rms spectral var.shape!!
-        # 4 dims - rms prop (convolutional layers)
-        rms = self.get_slot(var, "rms")
-        mom = self.get_slot(var, "momentum")
-        return _apply_rms_spectral(
-            var, rms, mom,
-            self._learning_rate_tensor,
-            self._decay_tensor,
-            self._momentum_tensor,
-            self._epsilon_tensor,
-            grad, use_locking=self._use_locking).op
-    
-    def _apply_sparse(self, grad, var):
-        raise NotImplementedError()
+
+        # 4 or 1 dims - rms prop (convolutional layers, bias)
+        print(grad.get_shape())
+        if ((len(grad.get_shape()) == 1) or (len(grad.get_shape()) == 4)):
+            print("applying rms prop")
+            return super()._apply_dense(grad, var)
+        else:
+            print("applying rms spectral")
+            return self._apply_rms_spectral(grad, var)
