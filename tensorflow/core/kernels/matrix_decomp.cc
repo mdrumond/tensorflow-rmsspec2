@@ -19,239 +19,183 @@ limitations under the License.
 #include "tensorflow/core/framework/op_kernel.h"
 #include "third_party/eigen3/Eigen/Core"
 #include "third_party/eigen3/Eigen/SVD"
-#include "tensorflow/core/kernels/linalg_ops_common.h"
+#include "third_party/eigen3/Eigen/QR"
 #include "tensorflow/core/platform/types.h"
+
+
+#define REGISTER_MATDECOMP_OP(OpName, OpClass, Scalar)       \
+  REGISTER_KERNEL_BUILDER(                                   \
+      Name(OpName).Device(DEVICE_CPU).TypeConstraint<Scalar>("T"), OpClass)
 
 namespace tensorflow{
 
-template <class Scalar, bool SupportsBatchOperationT>
-class MatrixDecompSvdSOp
-    : public UnaryLinearAlgebraOp<Scalar, SupportsBatchOperationT> {
- public:
-  explicit MatrixDecompSvdSOp(OpKernelConstruction* context)
-      : UnaryLinearAlgebraOp<Scalar, SupportsBatchOperationT>(context) { }
 
-  ~MatrixDecompSvdSOp() override {}
+template <typename T>
+class MatrixDecompSvdBase : public OpKernel {
+public:
+  explicit MatrixDecompSvdBase(OpKernelConstruction* context) : OpKernel(context) {}
 
-  TensorShape GetOutputMatrixShape(
-      const TensorShape& input_matrix_shape) override {
-    const int64 smallDim = (input_matrix_shape.dim_size(0) < input_matrix_shape.dim_size(1))?
-      input_matrix_shape.dim_size(0) : input_matrix_shape.dim_size(1);
-    return TensorShape({ smallDim });
-  }
-
-  int64 GetCostPerUnit(const TensorShape& input_matrix_shape) override {
-    const int64 rows = input_matrix_shape.dim_size(0);
-    const int64 cols = input_matrix_shape.dim_size(1);
-    // TODO: figure out the actual cost
-    if (rows > (1LL << 20)) {
-      // A big number to cap the cost in case overflow.
-      return kint32max;
-    } else {
-      return 2 * rows * cols;
-    }
-  }
+  using Matrix =
+      Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
+  using ConstMatrixMap = Eigen::Map<const Matrix>;
+  using MatrixMap = Eigen::Map<Matrix>;
   
-  typedef
-      typename UnaryLinearAlgebraOp<Scalar, SupportsBatchOperationT>::Matrix
-          Matrix;
-  typedef
-      typename UnaryLinearAlgebraOp<Scalar, SupportsBatchOperationT>::MatrixMap
-          MatrixMap;
-  typedef typename UnaryLinearAlgebraOp<
-      Scalar, SupportsBatchOperationT>::ConstMatrixMap ConstMatrixMap;
+private:
 
-  void ComputeMatrix(OpKernelContext* context, const ConstMatrixMap& matrix,
-                     MatrixMap* output) override {
-    const int64 rows = matrix.rows();
-    const int64 cols = matrix.cols();
+  virtual void ComputeSVD(OpKernelContext* context,
+                          const ConstMatrixMap& input,
+                          MatrixMap* outU, MatrixMap* outS, MatrixMap* outV)  = 0;
 
-    if (rows == 0 || cols == 0) {
+  virtual int64 GetSmallDim(OpKernelContext* context,
+                           const TensorShape& input_matrix_shape) = 0;
+  
+  void Compute(OpKernelContext* context) override{
+    const Tensor& in = context->input(0);
+    const TensorShape input_matrix_shape = TensorShape({in.dim_size(0),
+          in.dim_size(1)});
+
+    const int input_rank = in.dims();
+    OP_REQUIRES(context, input_rank == 2,
+                errors::InvalidArgument("Input tensor must have rank == 2"));
+
+    // Create the matrix type soe we can operate on it
+    ConstMatrixMap inMat(in.flat<T>().data(),
+                         input_matrix_shape.dim_size(0),
+                         input_matrix_shape.dim_size(1));
+
+
+    const int64 inSmallDim = GetSmallDim(context, input_matrix_shape);
+    // Allocate output
+    // U
+    Tensor* outU = nullptr;
+    TensorShape outU_shape( { input_matrix_shape.dim_size(0) , inSmallDim } );
+    OP_REQUIRES_OK(context, context->allocate_output(0, outU_shape, &outU));
+    MatrixMap outUMat(outU->flat<T>().data(),
+                      outU_shape.dim_size(0), outU_shape.dim_size(1));
+    
+    // S
+    Tensor* outS = nullptr;
+    TensorShape outS_shape( { inSmallDim } );
+    OP_REQUIRES_OK(context, context->allocate_output(1, outS_shape, &outS));
+    MatrixMap outSMat(outS->flat<T>().data(),
+                      outS_shape.dim_size(0), 1);
+
+    // V
+    Tensor* outV = nullptr;
+    TensorShape outV_shape( { input_matrix_shape.dim_size(1) , inSmallDim  } );
+    OP_REQUIRES_OK(context, context->allocate_output(2, outV_shape, &outV));
+    MatrixMap outVMat(outV->flat<T>().data(),
+                      outV_shape.dim_size(0), outV_shape.dim_size(1));
+
+    // Do the magic
+    ComputeSVD(context, inMat, &outUMat, &outSMat, &outVMat);
+  }
+};
+
+  
+template <typename T>
+class MatrixDecompSvd : public MatrixDecompSvdBase<T> {
+public:
+  explicit MatrixDecompSvd(OpKernelConstruction* context)
+    : MatrixDecompSvdBase<T>(context) {}
+  
+  int64 GetSmallDim(OpKernelContext* context,
+                   const TensorShape& input_matrix_shape) override {
+    return ((input_matrix_shape.dim_size(0) < input_matrix_shape.dim_size(1))?
+            input_matrix_shape.dim_size(0) : input_matrix_shape.dim_size(1));
+  }
+
+  using typename MatrixDecompSvdBase<T>::Matrix;
+  using typename MatrixDecompSvdBase<T>::ConstMatrixMap;
+  using typename MatrixDecompSvdBase<T>::MatrixMap;
+  
+  void ComputeSVD(OpKernelContext* context,
+                  const ConstMatrixMap& input,
+                  MatrixMap* outU, MatrixMap* outS, MatrixMap* outV) override {
+
+    if (input.rows() == 0 || input.rows() == 0) {
       // The result is the empty matrix.
       return;
     }
-    
-    *output = matrix.jacobiSvd(Eigen::ComputeThinU | Eigen::ComputeThinV).singularValues();
+    auto inJacobi = input.jacobiSvd(Eigen::ComputeThinU | Eigen::ComputeThinV);
+
+    *outU = inJacobi.matrixU();
+    *outS = inJacobi.singularValues();
+    *outV = inJacobi.matrixV();    
   }
-
 };
-
-REGISTER_LINALG_OP("MatrixDecompSvdS", (MatrixDecompSvdSOp<float, false>),
+  
+REGISTER_MATDECOMP_OP("MatrixDecompSvd", (MatrixDecompSvd<float>),
                           float);
-REGISTER_LINALG_OP("MatrixDecompSvdS", (MatrixDecompSvdSOp<double, false>),
+REGISTER_MATDECOMP_OP("MatrixDecompSvd", (MatrixDecompSvd<double>),
                           double);
 
-  template <class Scalar, bool SupportsBatchOperationT>
-class MatrixDecompSvdUOp
-    : public UnaryLinearAlgebraOp<Scalar, SupportsBatchOperationT> {
- public:
-  explicit MatrixDecompSvdUOp(OpKernelConstruction* context)
-      : UnaryLinearAlgebraOp<Scalar, SupportsBatchOperationT>(context) { }
+template <typename T>
+class MatrixDecompSvdRand : public MatrixDecompSvdBase<T> {
+public:
+  explicit MatrixDecompSvdRand(OpKernelConstruction* context)
+    : MatrixDecompSvdBase<T>(context) {}
 
-  ~MatrixDecompSvdUOp() override {}
-
-  TensorShape GetOutputMatrixShape(
-                                   const TensorShape& input_matrix_shape) override {
-    const int64 smallDim = (input_matrix_shape.dim_size(0) < input_matrix_shape.dim_size(1))?
-      input_matrix_shape.dim_size(0) : input_matrix_shape.dim_size(1);
-    
-    return TensorShape({ input_matrix_shape.dim_size(0),
-          smallDim});
+  int64 GetSmallDim(OpKernelContext* context,
+                    const TensorShape& input_matrix_shape) override {
+    return context->input(1).flat<int32>()(0);
   }
 
-  int64 GetCostPerUnit(const TensorShape& input_matrix_shape) override {
-    const int64 rows = input_matrix_shape.dim_size(0);
-    const int64 cols = input_matrix_shape.dim_size(1);
-    // TODO: figure out the actual cost
-    if (rows > (1LL << 20)) {
-      // A big number to cap the cost in case overflow.
-      return kint32max;
-    } else {
-      return 2 * rows * cols;
-    }
-  }
+  using typename MatrixDecompSvdBase<T>::Matrix;
+  using typename MatrixDecompSvdBase<T>::ConstMatrixMap;
+  using typename MatrixDecompSvdBase<T>::MatrixMap;
   
-  typedef
-      typename UnaryLinearAlgebraOp<Scalar, SupportsBatchOperationT>::Matrix
-          Matrix;
-  typedef
-      typename UnaryLinearAlgebraOp<Scalar, SupportsBatchOperationT>::MatrixMap
-          MatrixMap;
-  typedef typename UnaryLinearAlgebraOp<
-      Scalar, SupportsBatchOperationT>::ConstMatrixMap ConstMatrixMap;
+  void ComputeSVD(OpKernelContext* context,
+                  const ConstMatrixMap& input,
+                  MatrixMap* outU, MatrixMap* outS, MatrixMap* outV) override {
 
-  void ComputeMatrix(OpKernelContext* context, const ConstMatrixMap& matrix,
-                     MatrixMap* output) override {
-    const int64 rows = matrix.rows();
-    const int64 cols = matrix.cols();
-
-    if (rows == 0 || cols == 0) {
+    if (input.rows() == 0 || input.cols() == 0) {
       // The result is the empty matrix.
       return;
     }
+
+    int64 svdSmallDim = GetSmallDim(context,
+                                    TensorShape( {input.rows(), input.cols()} ));
+    int64 inSmallDim = (input.rows() > input.cols())? input.cols() : input.rows();
+    int64 inBigDim = (input.rows() > input.cols())? input.rows() : input.cols();
+    bool transpose = (input.cols() > input.rows())? true : false;
+
+    Matrix inMat = transpose? input.transpose().eval() : input;
+    if(transpose){
+      inMat = input.transpose();
+    }
+    else {
+      inMat = input;
+    }
+
+    Matrix randIn(Matrix::Random(inSmallDim, svdSmallDim));
+    Matrix id(Matrix::Identity(inBigDim, svdSmallDim));
+    auto q = (inMat * randIn).householderQr().householderQ()*id;
     
-    *output = matrix.jacobiSvd(Eigen::ComputeThinU | Eigen::ComputeThinV).matrixU();
-  }
-
-};
-
-REGISTER_LINALG_OP("MatrixDecompSvdU", (MatrixDecompSvdUOp<float, false>),
-                          float);
-REGISTER_LINALG_OP("MatrixDecompSvdU", (MatrixDecompSvdUOp<double, false>),
-                          double);
-
-  template <class Scalar, bool SupportsBatchOperationT>
-class MatrixDecompSvdVOp
-    : public UnaryLinearAlgebraOp<Scalar, SupportsBatchOperationT> {
- public:
-  explicit MatrixDecompSvdVOp(OpKernelConstruction* context)
-      : UnaryLinearAlgebraOp<Scalar, SupportsBatchOperationT>(context) { }
-
-  ~MatrixDecompSvdVOp() override {}
-
-  TensorShape GetOutputMatrixShape(
-                                   const TensorShape& input_matrix_shape) override {
-    const int64 smallDim = (input_matrix_shape.dim_size(0) < input_matrix_shape.dim_size(1))?
-      input_matrix_shape.dim_size(0) : input_matrix_shape.dim_size(1);
+    auto qInJacobi = (q.transpose() * inMat).jacobiSvd(Eigen::ComputeThinU | Eigen::ComputeThinV);
     
-    return TensorShape({ input_matrix_shape.dim_size(1), smallDim });
-  }
+    auto uHat = qInJacobi.matrixU();
+    auto s = qInJacobi.singularValues();
+    auto v = qInJacobi.matrixV();
 
-  int64 GetCostPerUnit(const TensorShape& input_matrix_shape) override {
-    const int64 rows = input_matrix_shape.dim_size(0);
-    const int64 cols = input_matrix_shape.dim_size(1);
-    // TODO: figure out the actual cost
-    if (rows > (1LL << 20)) {
-      // A big number to cap the cost in case overflow.
-      return kint32max;
-    } else {
-      return 2 * rows * cols;
+    auto u = q*uHat;
+
+    if(transpose){
+      *outU = v;
+      *outS = s;
+      *outV = u;
+    }
+    else {
+      *outU = u;
+      *outS = s;
+      *outV = v;
     }
   }
+};
+
   
-  typedef
-      typename UnaryLinearAlgebraOp<Scalar, SupportsBatchOperationT>::Matrix
-          Matrix;
-  typedef
-      typename UnaryLinearAlgebraOp<Scalar, SupportsBatchOperationT>::MatrixMap
-          MatrixMap;
-  typedef typename UnaryLinearAlgebraOp<
-      Scalar, SupportsBatchOperationT>::ConstMatrixMap ConstMatrixMap;
-
-  void ComputeMatrix(OpKernelContext* context, const ConstMatrixMap& matrix,
-                     MatrixMap* output) override {
-    const int64 rows = matrix.rows();
-    const int64 cols = matrix.cols();
-
-    if (rows == 0 || cols == 0) {
-      // The result is the empty matrix.
-      return;
-    }
-    
-    *output = matrix.jacobiSvd(Eigen::ComputeThinV | Eigen::ComputeThinU).matrixV();
-  }
-
-};
-
-REGISTER_LINALG_OP("MatrixDecompSvdV", (MatrixDecompSvdVOp<float, false>),
+REGISTER_MATDECOMP_OP("MatrixDecompSvdRand", (MatrixDecompSvdRand<float>),
                           float);
-REGISTER_LINALG_OP("MatrixDecompSvdV", (MatrixDecompSvdVOp<double, false>),
+REGISTER_MATDECOMP_OP("MatrixDecompSvdRand", (MatrixDecompSvdRand<double>),
                           double);
-
-
-    template <class Scalar, bool SupportsBatchOperationT>
-class MatrixDecompQrQOp
-    : public UnaryLinearAlgebraOp<Scalar, SupportsBatchOperationT> {
- public:
-  explicit MatrixDecompQrQOp(OpKernelConstruction* context)
-      : UnaryLinearAlgebraOp<Scalar, SupportsBatchOperationT>(context) { }
-
-  ~MatrixDecompQrQOp() override {}
-
-  TensorShape GetOutputMatrixShape(
-      const TensorShape& input_matrix_shape) override {
-    return TensorShape({ input_matrix_shape.dim_size(0),
-          input_matrix_shape.dim_size(0)});
-  }
-
-  int64 GetCostPerUnit(const TensorShape& input_matrix_shape) override {
-    const int64 rows = input_matrix_shape.dim_size(0);
-    const int64 cols = input_matrix_shape.dim_size(1);
-    // TODO: figure out the actual cost
-    if (rows > (1LL << 20)) {
-      // A big number to cap the cost in case overflow.
-      return kint32max;
-    } else {
-      return 2 * rows * cols;
-      ;    }
-  }
-  
-  typedef
-      typename UnaryLinearAlgebraOp<Scalar, SupportsBatchOperationT>::Matrix
-          Matrix;
-  typedef
-      typename UnaryLinearAlgebraOp<Scalar, SupportsBatchOperationT>::MatrixMap
-          MatrixMap;
-  typedef typename UnaryLinearAlgebraOp<
-      Scalar, SupportsBatchOperationT>::ConstMatrixMap ConstMatrixMap;
-
-  void ComputeMatrix(OpKernelContext* context, const ConstMatrixMap& matrix,
-                     MatrixMap* output) override {
-    const int64 rows = matrix.rows();
-    const int64 cols = matrix.cols();
-    if (rows == 0 || cols == 0) {
-      // The result is the empty matrix.
-      return;
-    }
-    
-    *output = matrix.householderQr().householderQ();
-  }
-
-};
-
-REGISTER_LINALG_OP("MatrixDecompQrQ", (MatrixDecompQrQOp<float, false>),
-                          float);
-REGISTER_LINALG_OP("MatrixDecompQrQ", (MatrixDecompQrQOp<double, false>),
-                          double);
-
 }  // namespace tensorflow

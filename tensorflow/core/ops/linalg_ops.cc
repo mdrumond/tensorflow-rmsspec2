@@ -367,25 +367,19 @@ rhs: Shape is `[..., M, K]`.
 output: Shape is `[..., N, K]`.
 )doc");
 
-REGISTER_OP("MatrixDecompSvdS")
+REGISTER_OP("MatrixDecompSvd")
 .Input("matrix: T")
-.Output("output: T")
+.Output("u: T")
+.Output("s: T")
+.Output("v: T")
 .Attr("T: {float, double}");
 
-REGISTER_OP("MatrixDecompSvdU")
+REGISTER_OP("MatrixDecompSvdRand")
 .Input("matrix: T")
-.Output("output: T")
+.Input("k: int32")
+.Output("u: T")
+.Output("s: T")
+.Output("v: T")
 .Attr("T: {float, double}");
-
-REGISTER_OP("MatrixDecompSvdV")
-.Input("matrix: T")
-.Output("output: T")
-.Attr("T: {float, double}");
-
-REGISTER_OP("MatrixDecompQrQ")
-.Input("matrix: T")
-.Output("output: T")
-.Attr("T: {float, double}");
-
 
 }  // namespace tensorflow

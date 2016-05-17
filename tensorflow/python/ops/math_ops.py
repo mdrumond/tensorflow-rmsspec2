@@ -97,11 +97,8 @@ functions on matrices to your graph.
 @@matrix_solve_ls
 @@batch_matrix_solve_ls
 
-@@matrix_decomp_svd_s
-@@matrix_decomp_svd_u
-@@matrix_decomp_svd_v
-
-@@matrix_decomp_qr_q
+@@matrix_decomp_svd
+@@matrix_decomp_svd_rand
 
 ## Complex Number Functions
 

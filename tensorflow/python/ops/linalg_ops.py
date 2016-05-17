@@ -21,6 +21,7 @@ from __future__ import print_function
 from tensorflow.python.framework import ops
 from tensorflow.python.framework import tensor_shape
 from tensorflow.python.ops import gen_linalg_ops
+from tensorflow.python.framework import tensor_util
 # go/tf-wildcard-import
 # pylint: disable=wildcard-import
 from tensorflow.python.ops.gen_linalg_ops import *
@@ -134,29 +135,17 @@ def _BatchMatrixSolveLsShape(op):
   lhs_shape[-2].assert_is_compatible_with(rhs_shape[-2])
   return [lhs_shape[:-2].concatenate([lhs_shape[-1], rhs_shape[-1]])]
 
-@ops.RegisterShape("MatrixDecompSvdS")
+@ops.RegisterShape("MatrixDecompSvd")
 def _MatrixDecompSvdS(op):
   matrix_shape = op.inputs[0].get_shape().with_rank(2)
   smallDim = min( matrix_shape[0], matrix_shape[1] ) 
-  return [ smallDim ]
+  return [ [matrix_shape[0], smallDim ], [smallDim], [matrix_shape[1], smallDim ] ]
 
-@ops.RegisterShape("MatrixDecompSvdU")
-def _MatrixDecompSvdU(op):
+@ops.RegisterShape("MatrixDecompSvdRand")
+def _MatrixDecompSvdS(op):
   matrix_shape = op.inputs[0].get_shape().with_rank(2)
-  smallDim = min( matrix_shape[0], matrix_shape[1] )   
-  return [ [matrix_shape[0], smallDim ] ]
-
-@ops.RegisterShape("MatrixDecompSvdV")
-def _MatrixDecompSvdV(op):
-  matrix_shape = op.inputs[0].get_shape().with_rank(2)
-  smallDim = min( matrix_shape[0], matrix_shape[1] )
-  # V is transposed
-  return [ [matrix_shape[1] , smallDim] ]
-
-@ops.RegisterShape("MatrixDecompQrQ")
-def _MatrixDecompQrQ(op):
-  matrix_shape = op.inputs[0].get_shape().with_rank(2)
-  return [ [matrix_shape[0], matrix_shape[0]] ]
+  smallDim = tensor_util.constant_value(op.inputs[1])
+  return [ [matrix_shape[0], smallDim ], [smallDim], [matrix_shape[1], smallDim ] ]
 
 
 # pylint: disable=invalid-name
@@ -270,17 +259,20 @@ def batch_matrix_solve_ls(matrix,
                                               fast=fast,
                                               name=name)
 
-def matrix_decomp_svd_s(matrix, name=None):
-  return gen_linalg_ops.matrix_decomp_svd_s(matrix, name=name)
+def matrix_decomp_svd(matrix, name=None):
+  return gen_linalg_ops.matrix_decomp_svd(matrix, name=name)
 
-def matrix_decomp_svd_u(matrix, name=None):
-  return gen_linalg_ops.matrix_decomp_svd_u(matrix, name=name)
+def _ShapeTensor(shape):
+  """Convert to an int32 or int64 tensor, defaulting to int32 if empty."""
+  if isinstance(shape, (tuple, list)) and not shape:
+    dtype = dtypes.int32
+  else:
+    dtype = None
+  return ops.convert_to_tensor(shape, dtype=dtype, name="shape")
 
-def matrix_decomp_svd_v(matrix, name=None):
-  return gen_linalg_ops.matrix_decomp_svd_v(matrix, name=name)
-
-def matrix_decomp_qr_q(matrix, name=None):
-  return gen_linalg_ops.matrix_decomp_qr_q(matrix, name=name)
+def matrix_decomp_svd_rand(matrix, k, name=None):
+  k = _ShapeTensor(k)
+  return gen_linalg_ops.matrix_decomp_svd_rand(matrix, k, name=name)
 
 
 # pylint: enable=invalid-name

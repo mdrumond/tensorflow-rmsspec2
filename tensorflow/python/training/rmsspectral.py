@@ -59,10 +59,13 @@ class RMSSpectralOptimizer(training.rmsprop.RMSPropOptimizer):
                                                    momentum, epsilon,
                                                    use_locking, name)
 
+    def _approxSharp(self, m, k):
+        u, s, v = linalg_ops.matrix_decomp_svd_rand(m, k)
+        return (math_ops.matmul(u, array_ops.transpose(v)) *
+                math_ops.reduce_sum(s))
+
     def _sharpOp(self, vector):
-        u = linalg_ops.matrix_decomp_svd_u(vector)
-        s = linalg_ops.matrix_decomp_svd_s(vector)
-        v = linalg_ops.matrix_decomp_svd_v(vector)
+        u, s, v = linalg_ops.matrix_decomp_svd(vector)
 
         return (math_ops.matmul(u, array_ops.transpose(v)) *
                 math_ops.reduce_sum(s))
@@ -82,9 +85,11 @@ class RMSSpectralOptimizer(training.rmsprop.RMSPropOptimizer):
                                 (1 - decay) *
                                 math_ops.square(grad))
         aux = math_ops.sqrt(math_ops.sqrt(rms_update)+epsilon)
+
+        sharpGrad = (self._sharpOp(grad / aux) if min(grad.get_shape()) < 30
+                     else self._approxSharp(grad / aux, 30))
         update = (lr *
-                  (self._sharpOp(grad / aux) /
-                   aux))
+                  (sharpGrad / aux))
 
         mom_update = mom.assign(mom * momentum + update)
         var_update = var.assign_sub(mom_update)
@@ -97,10 +102,7 @@ class RMSSpectralOptimizer(training.rmsprop.RMSPropOptimizer):
         # 2 dims - rms spectral var.shape!!
 
         # 4 or 1 dims - rms prop (convolutional layers, bias)
-        print(grad.get_shape())
         if ((len(grad.get_shape()) == 1) or (len(grad.get_shape()) == 4)):
-            print("applying rms prop")
             return super()._apply_dense(grad, var)
         else:
-            print("applying rms spectral")
             return self._apply_rms_spectral(grad, var)
