@@ -22,6 +22,7 @@ from __future__ import print_function
 
 from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import ops
+from tensorflow.python.ops import constant_op
 from tensorflow.python.ops import control_flow_ops
 from tensorflow.python.ops import gradients
 from tensorflow.python.ops import state_ops
@@ -151,11 +152,12 @@ class Optimizer(object):
     # Dictionary of slots.
     #  {slot_name : { variable_to_train: slot_for_the_variable, ...}, ... }
     self._slots = {}
+    self._pruning_table_slot = "_pruning_table"
 
   def minimize(self, loss, global_step=None, var_list=None,
                gate_gradients=GATE_OP, aggregation_method=None,
                colocate_gradients_with_ops=False, name=None,
-               grad_loss=None):
+               grad_loss=None, pruning_tables={}):
     """Add operations to minimize `loss` by updating `var_list`.
 
     This method simply combines calls `compute_gradients()` and
@@ -178,7 +180,7 @@ class Optimizer(object):
         the corresponding op.
       name: Optional name for the returned operation.
       grad_loss: Optional. A `Tensor` holding the gradient computed for `loss`.
-
+      
     Returns:
       An Operation that updates the variables in `var_list`.  If `global_step`
       was not `None`, that operation also increments `global_step`.
@@ -254,7 +256,31 @@ class Optimizer(object):
     self._assert_valid_dtypes([v for g, v in grads_and_vars if g is not None])
     return grads_and_vars
 
-  def apply_gradients(self, grads_and_vars, global_step=None, name=None):
+  def _apply_pruning(self, grads_and_vars, global_step=None):
+    """ Prune each var using its respective pruning table 
+    Args:
+      grads_and_vars: List of (gradient, variable) pairs as returned by
+        `compute_gradients()`.
+      global_step: Optional `Variable` to increment by one after the
+        variables have been updated.
+
+    Returns
+      An `Operation` that prunes the variables
+    """
+
+    pruned_grads_and_vars = []
+    for grad, var in grads_and_vars:
+      pruning_table = self.get_slot(var, self._pruning_table_slot)
+      if pruning_table is None:
+        pruned_grads_and_vars.append((grad, var))
+      else:
+        pruned_grads_and_vars.append((grad * pruning_table,
+                                      var * pruning_table))
+
+    return pruned_grads_and_vars
+
+  def apply_gradients(self, grads_and_vars, global_step=None,
+                      pruning_tables={}, name=None):
     """Apply gradients to variables.
 
     This is the second part of `minimize()`. It returns an `Operation` that
@@ -295,6 +321,8 @@ class Optimizer(object):
                        (grads_and_vars,))
     with ops.control_dependencies(None):
       self._create_slots(var_list)
+      self._create_pruning_tables(var_list, pruning_tables)
+    grads_and_vars = self._apply_pruning(grads_and_vars, global_step)
     update_ops = []
     with ops.op_scope([], name, self._name) as name:
       self._prepare()
@@ -314,6 +342,17 @@ class Optimizer(object):
         with ops.control_dependencies([self._finish(update_ops, "update")]):
           with ops.colocate_with(global_step):
             return state_ops.assign_add(global_step, 1, name=name).op
+
+  def get_pruning_table(self, var):
+    """Return the pruning table for  `var`
+    
+    Args:
+      var: a variable passed to `minimize()` or `apply_gradients()`.
+
+    Returns:
+      A variable containing the boolean pruning table for the given varible
+    """
+    return self.get_slot(var, self._pruning_table_slot)
 
   def get_slot(self, var, name):
     """Return a slot named `name` created for `var` by the Optimizer.
@@ -377,6 +416,18 @@ class Optimizer(object):
       Valid types for loss, variables and gradients.
     """
     return set([dtypes.float16, dtypes.float32])
+  
+  def _create_pruning_tables(self, var_list, pruning_tables):
+    """Create the pruning tables for the optimizer
+
+    Args:
+      var_list: A list of `Variable` objects.
+      pruning_tables: a list of tables, one for each prunned variable
+    """
+    for v in var_list:
+      if v in pruning_tables:
+        val = constant_op.constant(pruning_tables[v], dtype=bool, shape=v.get_shape())
+        self._get_or_make_slot(v, val, self._pruning_table_slot, self._name)
 
   def _create_slots(self, var_list):
     """Create all slots needed by the variables.
