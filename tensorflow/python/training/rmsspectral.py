@@ -53,11 +53,13 @@ class RMSSpectralOptimizer(training.rmsprop.RMSPropOptimizer):
                  decay=0.9,
                  momentum=0.0,
                  epsilon=1e-10,
+                 svd_approx_size=30,
                  use_locking=False,
                  name="RMSSpectral"):
         super(RMSSpectralOptimizer, self).__init__(learning_rate, decay,
                                                    momentum, epsilon,
                                                    use_locking, name)
+        self._svd_approx_size = svd_approx_size
 
     def _approxSharp(self, m, k):
         u, s, v = linalg_ops.matrix_decomp_svd_rand(m, k)
@@ -86,8 +88,8 @@ class RMSSpectralOptimizer(training.rmsprop.RMSPropOptimizer):
                                 math_ops.square(grad))
         aux = math_ops.sqrt(math_ops.sqrt(rms_update)+epsilon)
 
-        sharpGrad = (self._sharpOp(grad / aux) if min(grad.get_shape()) < 30
-                     else self._approxSharp(grad / aux, 30))
+        sharpGrad = (self._sharpOp(grad / aux) if min(grad.get_shape()) < self._svd_approx_size
+                     else self._approxSharp(grad / aux, self._svd_approx_size))
         update = (lr *
                   (sharpGrad / aux))
 
