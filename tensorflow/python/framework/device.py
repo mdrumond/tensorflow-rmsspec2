@@ -1,4 +1,4 @@
-# Copyright 2015 Google Inc. All Rights Reserved.
+# Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -225,12 +225,6 @@ class DeviceSpec(object):
       A DeviceSpec.
     """
     return DeviceSpec().parse_from_string(spec)
-
-
-# For backwards compatibility.
-# TODO(rjryan): Fix all callers then remove.
-Device = DeviceSpec
-from_string = DeviceSpec.from_string
 
 
 def check_valid(spec):

@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the 'License');
 you may not use this file except in compliance with the License.
@@ -51,6 +51,8 @@ const OUTPUT_SHAPES_KEY = '_output_shapes';
 export interface BaseEdge extends graphlib.EdgeObject {
   isControlDependency: boolean;
   isReferenceEdge: boolean;
+  /** The index of the output tensor of the source node. */
+  outputTensorIndex: number;
 }
 
 /**
@@ -69,7 +71,8 @@ export class SlimGraph {
 
 export interface NormalizedInput {
   name: string;
-  hasNumberPart: boolean;
+  /** The index of the output tensor of the source node. */
+  outputTensorIndex: number;
   isControlDependency: boolean;
 }
 
@@ -344,7 +347,7 @@ class OpNodeImpl implements OpNode {
    *
    * @param rawNode The raw node.
    */
-  constructor(rawNode: tf.TFNode) {
+  constructor(rawNode: tf.graph.proto.NodeDef) {
     this.op = rawNode.op;
     this.name = rawNode.name;
     this.device = rawNode.device;
@@ -375,8 +378,8 @@ export function createMetanode(name: string, opt = {}): Metanode {
  * Joins the information from the stats file (memory, compute time) with the
  * graph information.
  */
-export function joinStatsInfoWithGraph(graph: SlimGraph,
-    stats: StepStats): void {
+export function joinStatsInfoWithGraph(
+    graph: SlimGraph, stats: tf.graph.proto.StepStats): void {
   _.each(stats.dev_stats, devStats => {
     _.each(devStats.node_stats, nodeStats => {
       // Lookup the node in the graph by its original name, e.g. A. If not
@@ -407,16 +410,6 @@ export function joinStatsInfoWithGraph(graph: SlimGraph,
           }
         });
       }
-      let totalMicroSeconds = 0;
-      if (nodeStats.all_end_rel_micros) {
-        if (nodeStats.all_end_rel_micros > 0) {
-          totalMicroSeconds = Number(nodeStats.all_end_rel_micros);
-        } else {
-          /* tslint:disable */
-          console.log('ignoring negative runtime for ' + nodeName);
-          /* tslint:enable */
-        }
-      }
       let outputSize: number[][] = null;
       if (nodeStats.output) {
         outputSize = _.map(nodeStats.output, output => {
@@ -425,8 +418,21 @@ export function joinStatsInfoWithGraph(graph: SlimGraph,
         });
       }
       graph.nodes[nodeName].device = devStats.device;
-      graph.nodes[nodeName].stats = new NodeStats(totalBytes,
-        totalMicroSeconds, outputSize);
+      if (graph.nodes[nodeName].stats == null) {
+        graph.nodes[nodeName].stats = new NodeStats(outputSize);
+      }
+      graph.nodes[nodeName].stats.addBytesAllocation(totalBytes);
+      if (nodeStats.all_end_rel_micros) {
+        if (nodeStats.all_end_rel_micros > 0) {
+          graph.nodes[nodeName].stats.addExecutionTime(
+              nodeStats.all_start_micros,
+              nodeStats.all_start_micros + nodeStats.all_end_rel_micros);
+        } else {
+          /* tslint:disable */
+          console.log('ignoring negative runtime for ' + nodeName);
+          /* tslint:enable */
+        }
+      }
     });
   });
 }
@@ -435,12 +441,45 @@ export function joinStatsInfoWithGraph(graph: SlimGraph,
  * Execution stats for the node.
  */
 export class NodeStats {
-  constructor(totalBytes: number, totalMicros: number, outputSize: number[][]) {
-    this.totalBytes = totalBytes;
-    this.totalMicros = totalMicros;
-    this.outputSize = outputSize;
+  constructor(outputSize: number[][]) { this.outputSize = outputSize; }
+
+  /**
+   * Add the start and end time for a particular kernel execution of this op.
+   * Ops can have multiple kernel executions within the same session run.
+   */
+  addExecutionTime(startTime: number, endTime: number) {
+    if (this.startTime != null) {
+      this.startTime = Math.min(this.startTime, startTime);
+    } else {
+      this.startTime = startTime;
+    }
+    if (this.endTime != null) {
+      this.endTime = Math.max(this.endTime, endTime);
+    } else {
+      this.endTime = endTime;
+    }
   }
 
+  /**
+   * Add the bytes allocated for a particular kernel execution of this op.
+   * Ops can have multiple kernel executions within the same session run.
+   */
+  addBytesAllocation(totalBytes: number) {
+    if (this.totalBytes != null) {
+      this.totalBytes = Math.max(this.totalBytes, totalBytes);
+    } else {
+      this.totalBytes = totalBytes;
+    }
+  }
+
+  /**
+   * Absolute start time for the very first kernel execution of this op.
+   */
+  startTime: number;
+  /**
+   * Absolute end time for the very last kernel execution of this op.
+   */
+  endTime: number;
   /**
    * Total number of bytes used for the node. Sum of all children
    * if it is a Group node.
@@ -448,9 +487,14 @@ export class NodeStats {
   totalBytes: number;
   /**
    * Total number of compute time in microseconds used for the node.
-   * Sum of all children if it is a Group node.
+   * Sum of all children if it is a Group node. Null if it is unknown.
    */
-  totalMicros: number;
+  get totalMicros(): number {
+    if (this.startTime == null || this.endTime == null) {
+      return null;
+    }
+    return this.endTime - this.startTime;
+  }
   /**
    * The shape of each output tensors, if there are any.
    * Empty if it is a Group node.
@@ -467,7 +511,7 @@ export class NodeStats {
       this.totalBytes += stats.totalBytes;
     }
     if (stats.totalMicros != null) {
-      this.totalMicros += stats.totalMicros;
+      this.addExecutionTime(stats.startTime, stats.endTime);
     }
   }
 }
@@ -609,7 +653,7 @@ export function createMetaedge(v: string, w: string): Metaedge {
 /**
  * A label object for edges between metanodes of subgraphs in the render graph.
  */
-class MetaedgeImpl implements Metaedge {
+export class MetaedgeImpl implements Metaedge {
   v: string;
   w: string;
   baseEdgeList: BaseEdge[];
@@ -786,7 +830,8 @@ function extractOutputShapes(attr: {key: string, value: any}[]): TensorShape[] {
  * @param inputs Array of unnormalized names of input nodes.
  */
 function normalizeInputs(inputs: string[]): NormalizedInput[] {
-  return _.reduce(inputs, function(normalizedInputs, inputName) {
+  let normalizedInputs: NormalizedInput[] = [];
+  _.each(inputs, inputName => {
     let start = inputName[0] === '^';
     let colon = inputName.lastIndexOf(':');
     let end = colon !== -1 &&
@@ -798,17 +843,18 @@ function normalizeInputs(inputs: string[]): NormalizedInput[] {
       name !== normalizedInputs[normalizedInputs.length - 1].name) {
       normalizedInputs.push({
         name: name,
-        hasNumberPart: end !== inputName.length,
+        outputTensorIndex:
+            end === inputName.length ? 0 : Number(inputName.slice(colon + 1)),
         isControlDependency: start
       });
     }
-    return normalizedInputs;
-  }, []);
+  });
+  return normalizedInputs;
 }
 
-function addEdgeToGraph(graph: SlimGraph, inputName: string,
-    outputNode: OpNode, isControlDependency: boolean, params: BuildParams,
-    index: number) {
+function addEdgeToGraph(
+    graph: SlimGraph, inputName: string, outputNode: OpNode,
+    input: NormalizedInput, params: BuildParams, index: number) {
   // Don't allow loops in the graph.
   if (inputName === outputNode.name) {
     return;
@@ -819,12 +865,14 @@ function addEdgeToGraph(graph: SlimGraph, inputName: string,
   graph.edges.push({
     v: inputName,
     w: outputNode.name,
-    isControlDependency: isControlDependency,
+    outputTensorIndex: input.outputTensorIndex,
+    isControlDependency: input.isControlDependency,
     isReferenceEdge: isRefEdge
   });
 }
 
-export function build(rawNodes: tf.TFNode[], params: BuildParams,
+export function build(
+    rawNodes: tf.graph.proto.NodeDef[], params: BuildParams,
     tracker: ProgressTracker): Promise<SlimGraph|void> {
   /**
    * A dictionary that maps each in-embedding node name to the node
@@ -855,100 +903,115 @@ export function build(rawNodes: tf.TFNode[], params: BuildParams,
    */
   let nodeNames = new Array<string>(rawNodes.length);
 
-  return runAsyncTask('Normalizing names', 30, () => {
-           let opNodes = new Array<OpNode>(rawNodes.length);
-           let index = 0;
-           _.each(rawNodes, rawNode => {
-             let opNode = new OpNodeImpl(rawNode);
-             if (isInEmbeddedPred(opNode)) {
-               embeddingNodeNames.push(opNode.name);
-               inEmbedding[opNode.name] = opNode;
-               return;
-             }
+  return tf.graph.util
+      .runAsyncTask(
+          'Normalizing names', 30,
+          () => {
+            let opNodes = new Array<OpNode>(rawNodes.length);
+            let index = 0;
+            _.each(rawNodes, rawNode => {
+              let opNode = new OpNodeImpl(rawNode);
+              if (isInEmbeddedPred(opNode)) {
+                embeddingNodeNames.push(opNode.name);
+                inEmbedding[opNode.name] = opNode;
+                return;
+              }
 
-             if (isOutEmbeddedPred(opNode)) {
-               embeddingNodeNames.push(opNode.name);
-               outEmbedding[opNode.name] = opNode;
-               _.each(opNode.inputs, input => {
-                 let inputName = input.name;
-                 outEmbeddings[inputName] = outEmbeddings[inputName] || [];
-                 outEmbeddings[inputName].push(opNode);
-               });
-               return;
-             }
-             // The node is not an embedding, so add it to the names and nodes
-             // lists.
-             opNodes[index] = opNode;
-             nodeNames[index] = opNode.name;
-             index++;
-           });
-           opNodes.splice(index);
-           nodeNames.splice(index);
-           return opNodes;
-         }, tracker).then((opNodes) => {
-    // Create the graph data structure from the graphlib library.
-    return runAsyncTask('Building the data structure', 70, () => {
-      let normalizedNameDict = mapStrictHierarchy(nodeNames,
-        embeddingNodeNames);
-      let graph = new SlimGraph;
+              if (isOutEmbeddedPred(opNode)) {
+                embeddingNodeNames.push(opNode.name);
+                outEmbedding[opNode.name] = opNode;
+                _.each(opNode.inputs, input => {
+                  let inputName = input.name;
+                  outEmbeddings[inputName] = outEmbeddings[inputName] || [];
+                  outEmbeddings[inputName].push(opNode);
+                });
+                return;
+              }
+              // The node is not an embedding, so add it to the names and nodes
+              // lists.
+              opNodes[index] = opNode;
+              nodeNames[index] = opNode.name;
+              index++;
+            });
+            opNodes.splice(index);
+            nodeNames.splice(index);
+            return opNodes;
+          },
+          tracker)
+      .then((opNodes) => {
+        // Create the graph data structure from the graphlib library.
+        return tf.graph.util.runAsyncTask(
+            'Building the data structure', 70, () => {
+              let normalizedNameDict =
+                  mapStrictHierarchy(nodeNames, embeddingNodeNames);
+              let graph = new SlimGraph;
 
-      // Add the nodes to the graph.
-      _.each(opNodes, opNode => {
-        let normalizedName = normalizedNameDict[opNode.name] || opNode.name;
-        graph.nodes[normalizedName] = opNode;
-        // Check if the node has out-embeddings. If yes, add them to the
-        // node.
-        if (opNode.name in outEmbeddings) {
-          opNode.outEmbeddings = outEmbeddings[opNode.name];
-          // Normalize the names of the out-embeddings.
-          _.each(opNode.outEmbeddings, node => {
-            node.name = normalizedNameDict[node.name] || node.name;
-          });
-        }
-        // Update the name of the node.
-        opNode.name = normalizedName;
+              // Add the nodes to the graph.
+              _.each(opNodes, opNode => {
+                let normalizedName =
+                    normalizedNameDict[opNode.name] || opNode.name;
+                graph.nodes[normalizedName] = opNode;
+                // Check if the node has out-embeddings. If yes, add them to the
+                // node.
+                if (opNode.name in outEmbeddings) {
+                  opNode.outEmbeddings = outEmbeddings[opNode.name];
+                  // Normalize the names of the out-embeddings.
+                  _.each(opNode.outEmbeddings, node => {
+                    node.name = normalizedNameDict[node.name] || node.name;
+                  });
+                }
+                // Update the name of the node.
+                opNode.name = normalizedName;
+              });
+
+              // Visit each node's inputs to add the edges to the graph. If the
+              // input
+              // is an in-embedding, then add it to the node's in-embeddings
+              // instead.
+              _.each(opNodes, opNode => {
+                _.each(opNode.inputs, (input, i) => {
+                  let inputName = input.name;
+                  if (inputName in inEmbedding) {
+                    let inEmbedNode = inEmbedding[inputName];
+                    opNode.inEmbeddings.push(inEmbedNode);
+                    // Move the inputs of the in-embedding node into incoming
+                    // edges of
+                    // the main node. E.g. the control dependency of a constant
+                    // node
+                    // should be moved to the op node where the constant is
+                    // embedded.
+                    for (let embedInput of inEmbedNode.inputs) {
+                      addEdgeToGraph(
+                          graph, normalizedNameDict[embedInput.name] ||
+                              embedInput.name,
+                          opNode, embedInput, params, i);
+                    }
+                  } else if (inputName in outEmbedding) {
+                    // Move the inputs of the out-embedding node into inputs of
+                    // the main node where the out-embedding points to.
+                    let outEmbedNode = outEmbedding[inputName];
+                    for (let embedInput of outEmbedNode.inputs) {
+                      addEdgeToGraph(
+                          graph, normalizedNameDict[embedInput.name] ||
+                              embedInput.name,
+                          opNode, input, params, i);
+                    }
+                  } else {
+                    addEdgeToGraph(
+                        graph, normalizedNameDict[inputName] || inputName,
+                        opNode, input, params, i);
+                  }
+                });
+              });
+
+              // Normalize the names of in-embeddings.
+              _.each(inEmbedding, (node, name) => {
+                node.name = normalizedNameDict[node.name] || node.name;
+              });
+
+              return graph;
+            }, tracker);
       });
-
-      // Visit each node's inputs to add the edges to the graph. If the input
-      // is an in-embedding, then add it to the node's in-embeddings instead.
-      _.each(opNodes, opNode => {
-        _.each(opNode.inputs, (input, i) => {
-          let inputName = input.name;
-          if (inputName in inEmbedding) {
-            let inEmbedNode = inEmbedding[inputName];
-            opNode.inEmbeddings.push(inEmbedNode);
-            // Move the inputs of the in-embedding node into incoming edges of
-            // the main node. E.g. the control dependency of a constant node
-            // should be moved to the op node where the constant is embedded.
-            for (let embedInput of inEmbedNode.inputs) {
-              addEdgeToGraph(graph,
-                  normalizedNameDict[embedInput.name] || embedInput.name,
-                  opNode, embedInput.isControlDependency, params, i);
-            }
-          } else if (inputName in outEmbedding) {
-            // Move the inputs of the out-embedding node into inputs of
-            // the main node where the out-embedding points to.
-            let outEmbedNode = outEmbedding[inputName];
-            for (let embedInput of outEmbedNode.inputs) {
-              addEdgeToGraph(graph,
-                  normalizedNameDict[embedInput.name] || embedInput.name,
-                  opNode, input.isControlDependency, params, i);
-            }
-          } else {
-            addEdgeToGraph(graph, normalizedNameDict[inputName] || inputName,
-                opNode, input.isControlDependency, params, i);
-          }
-        });
-      });
-
-      // Normalize the names of in-embeddings.
-      _.each(inEmbedding, (node, name) => {
-        node.name = normalizedNameDict[node.name] || node.name;
-      });
-
-      return graph;
-    }, tracker);
-  });
 };
 
 /**

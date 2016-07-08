@@ -1,4 +1,4 @@
-// Copyright 2016 Google Inc. All Rights Reserved.
+// Copyright 2016 The TensorFlow Authors. All Rights Reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -25,8 +25,9 @@ int32 BestFeatureClassification(
   int32 best_feature_index = -1;
   // We choose the split with the lowest score.
   float best_score = kint64max;
-  const int32 num_splits = split_counts.shape().dim_size(1);
-  const int32 num_classes = split_counts.shape().dim_size(2);
+  const int32 num_splits = static_cast<int32>(split_counts.shape().dim_size(1));
+  const int32 num_classes = static_cast<int32>(
+      split_counts.shape().dim_size(2));
   // Ideally, Eigen::Tensor::chip would be best to use here but it results
   // in seg faults, so we have to go with flat views of these tensors.  However,
   // it is still pretty efficient because we put off evaluation until the
@@ -62,8 +63,9 @@ int32 BestFeatureRegression(
   int32 best_feature_index = -1;
   // We choose the split with the lowest score.
   float best_score = kint64max;
-  const int32 num_splits = split_sums.shape().dim_size(1);
-  const int32 num_regression_dims = split_sums.shape().dim_size(2);
+  const int32 num_splits = static_cast<int32>(split_sums.shape().dim_size(1));
+  const int32 num_regression_dims = static_cast<int32>(
+      split_sums.shape().dim_size(2));
   // Ideally, Eigen::Tensor::chip would be best to use here but it results
   // in seg faults, so we have to go with flat views of these tensors.  However,
   // it is still pretty efficient because we put off evaluation until the
@@ -83,13 +85,16 @@ int32 BestFeatureRegression(
   const auto splits_count_accessor = split_sums.tensor<float, 3>();
   const auto totals_count_accessor = total_sums.tensor<float, 2>();
 
-  Eigen::array<int, 1> bcast({num_splits});
+  Eigen::array<int, 1> bcast;
+  bcast[0] = num_splits;
   const auto right_sums = tc_sum.broadcast(bcast) - splits_sum;
   const auto right_squares = tc_square.broadcast(bcast) - splits_square;
 
   for (int i = 0; i < num_splits; i++) {
-    Eigen::array<int, 1> offsets = {i * num_regression_dims};
-    Eigen::array<int, 1> extents = {num_regression_dims};
+    Eigen::array<int, 1> offsets;
+    offsets[0] = i * num_regression_dims;
+    Eigen::array<int, 1> extents;
+    extents[0] = num_regression_dims;
     float left_count = splits_count_accessor(accumulator, i, 0);
     float right_count = totals_count_accessor(accumulator, 0) - left_count;
 
@@ -118,6 +123,7 @@ int32 BestFeatureRegression(
 
 bool DecideNode(const Tensor& point, int32 feature, float bias) {
   const auto p = point.unaligned_flat<float>();
+  CHECK_LT(feature, p.size());
   return p(feature) > bias;
 }
 

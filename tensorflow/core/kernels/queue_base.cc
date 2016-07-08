@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -364,6 +364,7 @@ Status QueueBase::CopySliceToElement(const Tensor& parent, Tensor* element,
   HANDLE_TYPE(DT_INT8);
   HANDLE_TYPE(DT_STRING);
   HANDLE_TYPE(DT_COMPLEX64);
+  HANDLE_TYPE(DT_COMPLEX128);
   HANDLE_TYPE(DT_INT64);
   HANDLE_TYPE(DT_BOOL);
   HANDLE_TYPE(DT_QINT8);
@@ -392,6 +393,7 @@ Status QueueBase::CopyElementToSlice(const Tensor& element, Tensor* parent,
   HANDLE_TYPE(DT_INT8);
   HANDLE_TYPE(DT_STRING);
   HANDLE_TYPE(DT_COMPLEX64);
+  HANDLE_TYPE(DT_COMPLEX128);
   HANDLE_TYPE(DT_INT64);
   HANDLE_TYPE(DT_BOOL);
   HANDLE_TYPE(DT_QINT8);

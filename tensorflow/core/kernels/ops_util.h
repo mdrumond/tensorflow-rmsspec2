@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -17,6 +17,8 @@ limitations under the License.
 #define TENSORFLOW_KERNELS_OPS_UTIL_H_
 
 // This file contains utilities for various operations.
+
+#include <array>
 
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
 #include "tensorflow/core/framework/tensor_shape.h"
@@ -89,6 +91,19 @@ Status Get2dOutputSizeVerbose(const int in_height, const int in_width,
                               int* new_height, int* new_width, int* pad_top,
                               int* pad_bottom, int* pad_left, int* pad_right);
 
+// Given an input tensor, kernel, stride and padding type, populates the 3D size
+// of the output tensor and padding to be applied to the input tensor at the
+// lower end of every dimension. Use for 3D convolutions, where the input data
+// is padded with zeros, as well as for 3D avg/max pooling, where the input data
+// is padded with invalid values that are not considered for pooling.
+//
+// TODO(mjanusz): Unify this with Get2dOutputSize by using a common template.
+Status Get3dOutputSize(const std::array<int64, 3>& input,
+                       const std::array<int64, 3>& window,
+                       const std::array<int64, 3>& strides,
+                       Padding padding_type, std::array<int64, 3>* output,
+                       std::array<int64, 3>* padding);
+
 // Calculates broadcast starting index and size.  For SAME padding, addition
 // padding could be applied to right, left, top and bottom.  Depending on the
 // current index, input size, kernel size, stride, padding size, the starting
@@ -112,77 +127,6 @@ bool IsInnerDimsSizeAligned(const TensorShape& s) {
   if (dim0_size == 0) return false;
   const int64 bytes_per_dim0 = (s.num_elements() / dim0_size) * sizeof(T);
   return bytes_per_dim0 % EIGEN_MAX_ALIGN_BYTES == 0;
-}
-
-// Returns in 'col_data', image patches in storage order (height, width, depth)
-// extracted from image at 'input_data', which is required to be in storage
-// order (batch, height, width, depth).
-// Implementation written by Yangqing Jia (jiayq).
-template <typename T>
-void Im2col(const T* input_data, const int depth, const int height,
-            const int width, const int filter_h, const int filter_w,
-            const int pad_t, const int pad_l, const int pad_b, const int pad_r,
-            const int stride_h, const int stride_w, T* col_data) {
-  int height_col = (height + pad_t + pad_b - filter_h) / stride_h + 1;
-  int width_col = (width + pad_l + pad_r - filter_w) / stride_w + 1;
-
-  int h_pad = -pad_t;
-  for (int h = 0; h < height_col; ++h) {
-    int w_pad = -pad_l;
-    for (int w = 0; w < width_col; ++w) {
-      for (int ih = h_pad; ih < h_pad + filter_h; ++ih) {
-        for (int iw = w_pad; iw < w_pad + filter_w; ++iw) {
-          if (ih >= 0 && ih < height && iw >= 0 && iw < width) {
-            memcpy(col_data, input_data + (ih * width + iw) * depth,
-                   sizeof(T) * depth);
-          } else {
-            // This should be simply padded with zero.
-            memset(col_data, 0, sizeof(T) * depth);
-          }
-          col_data += depth;
-        }
-      }
-      w_pad += stride_w;
-    }
-    h_pad += stride_h;
-  }
-}
-
-// Returns in 'im_data' image patch in storage order (height, width, depth),
-// constructed from patches in 'col_data', which is required to be in storage
-// order (out_height * out_width, filter_height, filter_width, in_depth).
-// Implementation by Yangqing Jia (jiayq).
-template <typename T>
-void Col2im(const T* col_data, const int depth, const int height,
-            const int width, const int filter_h, const int filter_w,
-            const int pad_t, const int pad_l, const int pad_b, const int pad_r,
-            const int stride_h, const int stride_w, T* im_data) {
-  memset(im_data, 0, sizeof(T) * height * width * depth);
-  int height_col = (height + pad_t + pad_b - filter_h) / stride_h + 1;
-  int width_col = (width + pad_l + pad_r - filter_w) / stride_w + 1;
-  int h_pad = -pad_t;
-  for (int h = 0; h < height_col; ++h) {
-    int w_pad = -pad_l;
-    for (int w = 0; w < width_col; ++w) {
-      T* im_patch_data = im_data + (h_pad * width + w_pad) * depth;
-      for (int ih = h_pad; ih < h_pad + filter_h; ++ih) {
-        for (int iw = w_pad; iw < w_pad + filter_w; ++iw) {
-          if (ih >= 0 && ih < height && iw >= 0 && iw < width) {
-            // TODO(andydavis) Vectorize this loop (if compiler does not).
-            for (int i = 0; i < depth; ++i) {
-              im_patch_data[i] += col_data[i];
-            }
-          }
-          im_patch_data += depth;
-          col_data += depth;
-        }
-        // Jump over remaining number of depth.
-        im_patch_data += depth * (width - filter_w);
-      }
-      w_pad += stride_w;
-    }
-    h_pad += stride_h;
-  }
 }
 
 // Returns <suffix> sanitized to have only [a-zA-Z0-9-_].

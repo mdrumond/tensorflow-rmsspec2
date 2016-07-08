@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -30,11 +30,10 @@ function getTask(task) {
 
 
 gulp.task('compile', getTask('compile'));
-gulp.task('typings', getTask('typings'));
 gulp.task('tslint', getTask('tslint')(true));
 // tslint.permissive warns without failing.
 gulp.task('tslint.permissive', getTask('tslint')(false));
-gulp.task('first-compile', ['typings'], getTask('compile'));
+gulp.task('first-compile', getTask('compile'));
 gulp.task('test.onlytest', getTask('test')); // if you don't want to lint, etc
 gulp.task('test', ['tslint', 'compile'], getTask('test'));
 

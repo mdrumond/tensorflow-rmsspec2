@@ -42,8 +42,11 @@ bazel build tensorflow/tensorboard:tensorboard
 
 This should print that TensorBoard has started. Next, connect to http://localhost:6006.
 
-Note that TensorBoard requires a `logdir` to read logs from. For info on
-configuring TensorBoard, run `tensorboard --help`.
+TensorBoard requires a `logdir` to read logs from. For info on configuring
+TensorBoard, run `tensorboard --help`.
+
+TensorBoard can be used in Google Chrome or Firefox. Other browsers might
+work, but there may be bugs or performance issues.
 
 # Key Concepts
 
@@ -51,18 +54,18 @@ configuring TensorBoard, run `tensorboard --help`.
 
 The first step in using TensorBoard is acquiring data from your TensorFlow run.
 For this, you need [summary
-ops](https://www.tensorflow.org/versions/r0.8/api_docs/python/train.html#summary-operations).
+ops](https://www.tensorflow.org/versions/r0.9/api_docs/python/train.html#summary-operations).
 Summary ops are ops, like
-[`tf.matmul`](https://www.tensorflow.org/versions/r0.8/api_docs/python/math_ops.html#matmul)
+[`tf.matmul`](https://www.tensorflow.org/versions/r0.9/api_docs/python/math_ops.html#matmul)
 or
-[`tf.nn.relu`](https://www.tensorflow.org/versions/r0.8/api_docs/python/nn.html#relu),
+[`tf.nn.relu`](https://www.tensorflow.org/versions/r0.9/api_docs/python/nn.html#relu),
 which means they take in tensors, produce tensors, and are evaluated from within
 a TensorFlow graph. However, summary ops have a twist: the Tensors they produce
 contain serialized protobufs, which are written to disk and sent to TensorBoard.
 To visualize the summary data in TensorBoard, you should evaluate the summary
 op, retrieve the result, and then write that result to disk using a
 SummaryWriter. A full explanation, with examples, is in [the
-tutorial](https://www.tensorflow.org/versions/r0.8/how_tos/summaries_and_tensorboard/index.html).
+tutorial](https://www.tensorflow.org/versions/r0.9/how_tos/summaries_and_tensorboard/index.html).
 
 ### Tags: Giving names to data
 
@@ -175,7 +178,7 @@ TensorFlow model. To get best use of the graph visualizer, you should use name
 scopes to hierarchically group the ops in your graph - otherwise, the graph may
 be difficult to decipher. For more information, including examples, see [the
 graph visualizer
-tutorial](https://www.tensorflow.org/versions/r0.8/how_tos/graph_viz/index.html#tensorboard-graph-visualization).
+tutorial](https://www.tensorflow.org/versions/r0.9/how_tos/graph_viz/index.html#tensorboard-graph-visualization).
 
 # Frequently Asked Questions
 
@@ -208,13 +211,10 @@ under a subdirectory. Try running the command:
 
 If you have at least one result, then TensorBoard should be able to load data.
 
-Finally, let's make sure that the event files actually have data. Inspecting
-them is a bit tricky, but we can get a hint from the size: try
+Finally, let's make sure that the event files actually have data. Run
+tensorboard in inspector mode to inspect the contents of your event files.
 
-`find DIRECTORY_PATH | grep tfevents | xargs ls -lh`
-
-and look at the sizes of the files. If they are all tiny (around 69 bytes) then
-they probably just contain a file version descriptor, but no actual events.
+`tensorboard --inspect --logdir=DIRECTORY_PATH`
 
 If after running this procedure, it's still not working, please file an [issue
 on GitHub](https://github.com/tensorflow/tensorflow/issues). It will be much
@@ -331,9 +331,11 @@ that someone else has already had the same issue or question.
 
 If you have a bug, please [file a GitHub
 issue](https://github.com/tensorflow/tensorflow/issues). If the bug is related
-to your specific data (e.g. the events aren't loading properly), please upload
-some events files that will reproduce the issue - that makes it much easier for
-us to debug and fix.
+to your specific data (e.g. the events aren't loading properly), please do both
+of the following things to make it easier for us to debug and fix:
+
+- Run tensorboard in --inspect mode and copy paste the debug output.
+- Upload some events files that will reproduce the issue.
 
 If you have a feature request, please [file a GitHub
 issue](https://github.com/tensorflow/tensorflow/issues).

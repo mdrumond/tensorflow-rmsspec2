@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright 2016 Google Inc. All Rights Reserved.
+# Copyright 2016 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -140,7 +140,7 @@ while true; do
   sleep 1
 
   ((COUNTER++))
-  if [[ $(echo "${COUNTER}>=${MAX_SERVER_POLLING_ATTEMPTS}" | bc -l) == "1" ]]; then
+  if [[ "${COUNTER}" -ge "${MAX_SERVER_POLLING_ATTEMPTS}" ]]; then
     die "Reached maximum number of attempts (${MAX_SERVER_POLLING_ATTEMPTS}) "\
 "while waiting for docker-in-docker for local k8s TensorFlow cluster to start"
   fi

@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the 'License');
 you may not use this file except in compliance with the License.
@@ -96,10 +96,19 @@ describe('tf-tensorboard tests', () => {
 
       it('settings icon button opens the settings pane', function(done) {
         tensorboard.$$('#settings-button').click();
-        setTimeout(function() {  // async, give it a moment
-          assert.notEqual(tensorboard.$.settings.style['display'], 'none');
-          done();
-        });
+        // This test is a little hacky since we depend on polymer's
+        // async behavior, which is difficult to predict.
+
+        // keep checking until the panel is visible. error with a timeout if it
+        // is broken.
+        function verify() {
+          if (tensorboard.$.settings.style['display'] !== 'none') {
+            done();
+          } else {
+            setTimeout(verify, 3);  // wait and see if it becomes true
+          }
+        }
+        verify();
       });
 
       it('Autoreload checkbox toggle works', function() {

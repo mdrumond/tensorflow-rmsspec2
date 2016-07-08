@@ -1,4 +1,4 @@
-/* Copyright 2016 Google Inc. All Rights Reserved.
+/* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -346,7 +346,7 @@ Status BatchExampleProtoToTensors(
   }
 
   // Temporary vector to hold sparse values.
-  std::vector<std::vector<Tensor>> sparse_values_tmp(batch_size);
+  std::vector<std::vector<Tensor>> sparse_values_tmp(var_len_features.size());
 
   for (int d = 0; d < var_len_features.size(); ++d) {
     sparse_values_tmp[d] = std::vector<Tensor>(batch_size);

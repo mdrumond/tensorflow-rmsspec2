@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -211,6 +211,11 @@ TEST(StrippedOpListForGraphTest, FlatTest) {
         EXPECT_EQ(op.description(), "");
         EXPECT_EQ(op.is_commutative(), !i);
       }
+
+      // Should get the same result using OpsUsedByGraph().
+      std::set<string> used_ops;
+      OpsUsedByGraph(graph_def, &used_ops);
+      ASSERT_EQ(std::set<string>({"B", "C"}), used_ops);
     }
   }
 }
@@ -243,6 +248,11 @@ TEST(StrippedOpListForGraphTest, NestedFunctionTest) {
                                         &stripped_op_list));
     ASSERT_EQ(stripped_op_list.op_size(), 1);
     ASSERT_EQ(stripped_op_list.op(0).name(), "A");
+
+    // Should get the same result using OpsUsedByGraph().
+    std::set<string> used_ops;
+    OpsUsedByGraph(graph_def, &used_ops);
+    ASSERT_EQ(std::set<string>({"A"}), used_ops);
   }
 }
 

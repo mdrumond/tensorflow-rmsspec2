@@ -1,4 +1,4 @@
-# Copyright 2015 Google Inc. All Rights Reserved.
+# Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -37,12 +37,14 @@ def Assert(condition, data, summarize=None, name=None):
   If `condition` evaluates to false, print the list of tensors in `data`.
   `summarize` determines how many entries of the tensors to print.
 
-  NOTE: To ensure that Assert executes, one usually attaches a dependency:
+  NOTE: To ensure that Assert executes, one usually attaches a control
+  dependency:
 
   ```python
    # Ensure maximum element of x is smaller or equal to 1
   assert_op = tf.Assert(tf.less_equal(tf.reduce_max(x), 1.), [x])
-  x = tf.with_dependencies([assert_op], x)
+  with tf.control_dependencies([assert_op]):
+    x = tf.identity(x)
   ```
 
   Args:
@@ -261,7 +263,7 @@ def merge_all_summaries(key=ops.GraphKeys.SUMMARIES):
 
   Returns:
     If no summaries were collected, returns None.  Otherwise returns a scalar
-    `Tensor` of type`string` containing the serialized `Summary` protocol
+    `Tensor` of type `string` containing the serialized `Summary` protocol
     buffer resulting from the merging.
   """
   summary_ops = ops.get_collection(key)
@@ -269,6 +271,30 @@ def merge_all_summaries(key=ops.GraphKeys.SUMMARIES):
     return None
   else:
     return merge_summary(summary_ops)
+
+
+def get_summary_op():
+  """Returns a single Summary op that would run all summaries.
+
+  Either existing one from `SUMMARY_OP` collection or merges all existing
+  summaries.
+
+  Returns:
+    If no summaries were collected, returns None. Otherwise returns a scalar
+    `Tensor` of type `string` containing the serialized `Summary` protocol
+    buffer resulting from the merging.
+  """
+  summary_op = ops.get_collection(ops.GraphKeys.SUMMARY_OP)
+  if summary_op is not None:
+    if summary_op:
+      summary_op = summary_op[0]
+    else:
+      summary_op = None
+  if summary_op is None:
+    summary_op = merge_all_summaries()
+    if summary_op is not None:
+      ops.add_to_collection(ops.GraphKeys.SUMMARY_OP, summary_op)
+  return summary_op
 
 
 def scalar_summary(tags, values, collections=None, name=None):

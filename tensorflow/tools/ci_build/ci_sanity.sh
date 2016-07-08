@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright 2016 Google Inc. All Rights Reserved.
+# Copyright 2016 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -109,11 +109,33 @@ do_pylint() {
   fi
 }
 
+# Run bazel build --nobuild to test the validity of the BUILD files
+do_bazel_nobuild() {
+  BUILD_TARGET="//tensorflow/..."
+  BUILD_CMD="bazel build --nobuild ${BUILD_TARGET}"
+
+  ${BUILD_CMD}
+
+  if [[ $? != 0 ]]; then
+    echo ""
+    echo "FAIL: ${BUILD_CMD}"
+    echo "  This is due to invalid BUILD files. See lines above for details."
+    return 1
+  else
+    echo ""
+    echo "PASS: ${BUILD_CMD}"
+    return 0
+  fi
+}
+
 
 FAIL=0
 
 # Pylint
 do_pylint || FAIL=1
+
+# bazel nobuild
+do_bazel_nobuild || FAIL=1
 
 echo ""
 if [[ ${FAIL} == "0" ]]; then

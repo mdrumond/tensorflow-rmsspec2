@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -119,6 +119,7 @@ bool NeedSameDeviceSendRecv(const Edge* edge, const GraphInfo& info) {
   if (src->assigned_device_name() == dst->assigned_device_name()) {
     int src_port = edge->src_output();
     int dst_port = edge->dst_input();
+    // TODO(vrv): Shouldn't this be != DEVICE_CPU?
     if (info.device_types[src->id()] == DEVICE_GPU) {
       auto src_it = info.output_types.find({src->id(), src_port});
       DCHECK(src_it != info.output_types.end());

@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -305,7 +305,7 @@ void SpatialAvgPool(OpKernelContext* context, Tensor* output,
             const int out_offset =
                 (b * params.out_height + ph) * params.out_width + pw;
             out_mat.col(out_offset) += in_mat.col(in_offset);
-            out_count(out_offset)++;
+            out_count(out_offset) += T(1);
           }
         }
       }

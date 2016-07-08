@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -96,10 +96,14 @@ REGISTER(CPU, float, int32)
 REGISTER(CPU, float, int64)
 REGISTER(CPU, double, int32)
 REGISTER(CPU, double, int64)
+REGISTER(CPU, Eigen::half, int32)
+REGISTER(CPU, Eigen::half, int64)
 
 #if GOOGLE_CUDA
 REGISTER(GPU, float, int32)
 REGISTER(GPU, float, int64)
+REGISTER(GPU, Eigen::half, int32)
+REGISTER(GPU, Eigen::half, int64)
 #endif  // GOOGLE_CUDA
 
 #undef REGISTER

@@ -1,4 +1,4 @@
-# Copyright 2015 Google Inc. All Rights Reserved.
+# Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -590,6 +590,32 @@ class ControlFlowTest(tf.test.TestCase):
     self._testWhile_Gpu_1(use_gpu=False)
     self._testWhile_Gpu_1(use_gpu=True)
 
+  def testWhileShape(self):
+    with self.test_session():
+      i = tf.constant(0)
+      m = tf.ones([2, 2])
+      c = lambda i, j: tf.less(i, 2)
+      def _b(i, j):
+        new_i = tf.add(i, 1)
+        new_j = tf.tile(j, [2, 2])
+        return [new_i, new_j]
+      r = tf.while_loop(c, _b, [i, m])
+      r = r[1] * tf.ones([8, 8])
+      self.assertAllEqual(np.ones((8, 8)), r.eval())
+
+  def testWhileShapeInference(self):
+    with self.test_session():
+      i = tf.constant(0)
+      m = tf.ones([2, 2])
+      c = lambda i, j: tf.less(i, 2)
+      def _b(i, j):
+        new_i = tf.add(i, 1)
+        new_j = tf.concat(0, [j, j])
+        return [new_i, new_j]
+      r = tf.while_loop(c, _b, [i, m])
+      self.assertTrue(r[1].get_shape()[0].value is None)
+      self.assertEqual(r[1].get_shape()[1], tf.Dimension(2))
+
   def _testNestedWhile_1(self, use_gpu):
     with self.test_session(use_gpu=use_gpu):
       n = tf.constant(0)
@@ -639,6 +665,14 @@ class ControlFlowTest(tf.test.TestCase):
 
       res = tf.while_loop(condition, body, [r], parallel_iterations=1)
       self.assertAllEqual(12, res.eval())
+
+  def testWhileWithControl_3(self):
+    with self.test_session() as sess:
+      b = tf.placeholder(tf.bool)
+      c = tf.constant(0)
+      with tf.control_dependencies([b]):
+        c = tf.while_loop(lambda x: x < 10, lambda x: x + 1, [c])
+      self.assertEqual(10, sess.run(c, {b: True}))
 
   def testCondWhile_1(self):
     with self.test_session():
@@ -1014,6 +1048,36 @@ class ControlFlowTest(tf.test.TestCase):
       r = tf.gradients(r, v)
       self.assertAllClose(1.0, r[0].eval())
 
+  def testWhileGrad_NoDependency(self):
+    with self.test_session() as sess:
+      variable = tf.Variable(tf.ones([2, 3]))
+      time = tf.zeros([], dtype=tf.int32)
+      def cond(time, tensor, _):
+        return time < 10
+      def body(time, tensor, _):
+        return (time+1, tensor, tensor)
+      loop_vars = [time, variable, variable]
+      tensors = tf.while_loop(cond=cond, body=body, loop_vars=loop_vars)
+      cost = tf.reduce_sum(tensors[2])
+      grad = tf.gradients(cost, [variable])
+      tf.initialize_all_variables().run()
+      self.assertAllClose(np.ones([2, 3]), sess.run(grad[0]))
+
+  def testWhileGrad_Const(self):
+    with self.test_session() as sess:
+      c0 = tf.constant(0.0, name="c0")
+      c1 = tf.constant(1.0, name="c1")
+      time = tf.constant(0, name="t")
+      def cond(time, _):
+        return time < 1
+      def body(time, tensor):
+        return time+1, c1
+      loop_vars = [time, c0]
+      tensors = tf.while_loop(cond=cond, body=body, loop_vars=loop_vars)
+      cost = tf.reduce_sum(tensors[1])
+      grad = tf.gradients(cost, [c0])
+      self.assertAllClose(0.0, sess.run(grad[0]))
+
   def testWhileGrad_SerialTwoLoops(self):
     with self.test_session():
       i = tf.constant(0, name="i")
@@ -1172,6 +1236,38 @@ class ControlFlowTest(tf.test.TestCase):
     self.assertEqual(0, value_x)
     self.assertEqual(73, value_x_grad)
 
+  def testWhileGrad_IndexedSlices(self):
+    with self.test_session():
+      values = tf.constant([2.0, 4.0], name="values")
+      indices = tf.constant([0, 3], name="indices")
+      shape = tf.constant([10], name="dense_shape")
+      i = tf.constant(0)
+      x = tf.IndexedSlices(values, indices, dense_shape=shape)
+      def c(i, _):
+        return i < 10
+      def b(i, x):
+        return [i + 1, tf.IndexedSlices(x.values * 2.0, x.indices,
+                                        x.dense_shape)]
+      _, r = tf.while_loop(c, b, [i, x])
+      r = tf.gradients(r.values, values)[0]
+      self.assertAllClose(np.array([1024.0, 1024.0]), r.eval())
+
+  def testWhileGrad_SparseTensor(self):
+    with self.test_session():
+      values = tf.constant([2.0, 4.0], name="values")
+      indices = tf.constant([[0], [3]], dtype=tf.int64, name="indices")
+      shape = tf.constant([10], dtype=tf.int64, name="dense_shape")
+      i = tf.constant(0)
+      x = tf.SparseTensor(indices, values, shape=shape)
+      def c(i, _):
+        return i < 10
+      def b(i, x):
+        return [i + 1, tf.SparseTensor(x.indices, x.values * 2.0,
+                                       x.shape)]
+      _, r = tf.while_loop(c, b, [i, x])
+      r = tf.gradients(r.values, values)[0]
+      self.assertAllClose(np.array([1024.0, 1024.0]), r.eval())
+
   def testOneValueCond(self):
     with self.test_session():
       c = tf.placeholder(tf.int32, shape=[])
@@ -1235,16 +1331,49 @@ class ControlFlowTest(tf.test.TestCase):
 
       def break_run_twice(ix):
         def _break():
-          assert not ran_once[ix]
           ran_once[ix] = True
           return tf.constant(ix)
         return _break
 
       # Should not fail - each conditional gets called exactly once
+      # except default.  Default gets called twice: once to create an
+      # empty output and once for the actual cond switch.
       r6 = tf.case([(x < y, break_run_twice(0)), (x > y, break_run_twice(1))],
-                   default=break_run_twice(2))
+                   default=lambda: tf.constant(2))
 
       self.assertAllEqual(r6.eval(), 0)
+
+  def testCaseSideEffects(self):
+    with self.test_session() as sess:
+      v0 = tf.Variable(-1)
+      v1 = tf.Variable(-1)
+      v2 = tf.Variable(-1)
+
+      a = lambda: control_flow_ops.with_dependencies([tf.assign(v0, 0)], 0)
+      b = lambda: control_flow_ops.with_dependencies([tf.assign(v1, 1)], 1)
+      c = lambda: control_flow_ops.with_dependencies([tf.assign(v2, 2)], 2)
+
+      x = tf.constant(1)
+      y = tf.constant(2)
+
+      r0 = tf.case(((x < y, a), (x > y, b)), default=c, exclusive=True)
+      r1 = tf.case(((x > y, a), (x < y, b)), default=c, exclusive=True)
+      r2 = tf.case(((x > y, a), (x > y, b)), default=c, exclusive=True)
+
+      tf.initialize_all_variables().run()
+      self.assertAllEqual(sess.run([v0, v1, v2]), [-1] * 3)
+      self.assertEqual(2, r2.eval())
+      self.assertAllEqual(sess.run([v0, v1, v2]), [-1, -1, 2])
+
+      tf.initialize_all_variables().run()
+      self.assertAllEqual(sess.run([v0, v1, v2]), [-1] * 3)
+      self.assertEqual(1, r1.eval())
+      self.assertAllEqual(sess.run([v0, v1, v2]), [-1, 1, -1])
+
+      tf.initialize_all_variables().run()
+      self.assertAllEqual(sess.run([v0, v1, v2]), [-1] * 3)
+      self.assertEqual(0, r0.eval())
+      self.assertAllEqual(sess.run([v0, v1, v2]), [0, -1, -1])
 
   def testOneOpCond(self):
     with self.test_session():
@@ -1476,6 +1605,22 @@ class ControlFlowTest(tf.test.TestCase):
     p2.set_shape([None, 2])
     s = control_flow_ops.ref_select(index, [p1, p2])
     self.assertEqual(None, s.get_shape())
+
+  def testRunLoopTensor(self):
+    with self.test_session() as sess:
+      tensor_list = []
+      def condition(t):
+        return t < tf.constant(5)
+      def body(_):
+        tensor_list.append(tf.constant(5))
+        return tf.constant(10)
+      result = tf.while_loop(condition, body, [tf.constant(4)])
+      self.assertEqual(10, sess.run(result))
+
+      # Ensure that we cannot run a tensor that escapes the loop body
+      # accidentally.
+      with self.assertRaises(ValueError):
+        sess.run(tensor_list[0])
 
 
 class TupleTest(tf.test.TestCase):

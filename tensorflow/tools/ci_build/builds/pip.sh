@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright 2016 Google Inc. All Rights Reserved.
+# Copyright 2016 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -184,10 +184,11 @@ source "${VENV_DIR}/bin/activate" || \
 
 
 # Install the pip file in virtual env (plus missing dependencies)
-pip install -v ${WHL_PATH} || die "pip install (without --upgrade) FAILED"
+
 # Force tensorflow reinstallation. Otherwise it may not get installed from
 # last build if it had the same version number as previous build.
-pip install -v --upgrade --no-deps --force-reinstall ${WHL_PATH} || \
+PIP_FLAGS="--upgrade --force-reinstall"
+pip install -v ${PIP_FLAGS} ${WHL_PATH} || \
     die "pip install (forcing to reinstall tensorflow) FAILED"
 echo "Successfully installed pip package ${WHL_PATH}"
 

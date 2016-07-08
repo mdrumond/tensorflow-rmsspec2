@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -136,6 +136,7 @@ TF_CALL_NUMBER_TYPES(REGISTER_ADDN_CPU);
 #undef REGISTER_ADDN_CPU
 
 #if GOOGLE_CUDA
+REGISTER_ADDN(Eigen::half, GPU);
 REGISTER_ADDN(float, GPU);
 
 // A special GPU kernel for int32.

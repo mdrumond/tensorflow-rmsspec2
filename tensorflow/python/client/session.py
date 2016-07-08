@@ -1,4 +1,4 @@
-# Copyright 2015 Google Inc. All Rights Reserved.
+# Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -24,6 +24,7 @@ import threading
 
 import numpy as np
 
+from tensorflow.core.protobuf import config_pb2
 from tensorflow.python import pywrap_tensorflow as tf_session
 from tensorflow.python.framework import errors
 from tensorflow.python.framework import ops
@@ -68,6 +69,42 @@ def _get_feeds_for_indexed_slices(feed, feed_val):
                   [feed.values, feed.indices, feed.dense_shape], feed_val))
 
 
+def _flatten1(seq):
+  """Flattens one level of nested sequences."""
+  ret = []
+  for el in seq:
+    if isinstance(el, (list, tuple)):
+      ret.extend(el)
+    else:
+      ret.append(el)
+  return ret
+
+
+def _unflatten_fetches(fetches, flat_values):
+  """Creates a dictionary mapping fetched keys to values.
+
+  Args:
+    fetches: A heterogeneous list of either graph elements or lists/tuples
+      of graph elements.
+    flat_values: A flat list of fetched values.
+
+  Returns:
+    A dictionary with the same keys as `fetches`, mapping to the fetched value
+    (or list of values) in `flat_values`.
+  """
+  used = 0
+  ret = {}
+  for key, fetch in fetches.items():
+    if isinstance(fetch, (list, tuple)):
+      start, used = used, used + len(fetch)
+      ret[key] = flat_values[start : used]
+    else:
+      ret[key] = flat_values[used]
+      used += 1
+  assert used == len(flat_values)
+  return ret
+
+
 class BaseSession(SessionInterface):
   """A class for interacting with a TensorFlow computation.
 
@@ -85,8 +122,8 @@ class BaseSession(SessionInterface):
       config: (Optional) ConfigProto proto used to configure the session.
 
     Raises:
-      RuntimeError: If an error occurs while creating the TensorFlow
-        session.
+      tf.errors.OpError: Or one of its subclasses if an error occurs while
+        creating the TensorFlow session.
     """
     if graph is None:
       self._graph = ops.get_default_graph()
@@ -104,16 +141,14 @@ class BaseSession(SessionInterface):
     self._dead_handles = []
 
     self._session = None
+    self._config = config
+    self._add_shapes = config.graph_options.infer_shapes if (
+        config and config.graph_options) else False
 
-    opts = tf_session.TF_NewSessionOptions(target=target, config=config)
     try:
-      status = tf_session.TF_NewStatus()
-      try:
+      opts = tf_session.TF_NewSessionOptions(target=target, config=config)
+      with errors.raise_exception_on_not_ok_status() as status:
         self._session = tf_session.TF_NewSession(opts, status)
-        if tf_session.TF_GetCode(status) != 0:
-          raise RuntimeError(compat.as_text(tf_session.TF_Message(status)))
-      finally:
-        tf_session.TF_DeleteStatus(status)
     finally:
       tf_session.TF_DeleteSessionOptions(opts)
 
@@ -123,30 +158,21 @@ class BaseSession(SessionInterface):
     Calling this method frees all resources associated with the session.
 
     Raises:
-      RuntimeError: If an error occurs while closing the session.
+      tf.errors.OpError: Or one of its subclasses if an error occurs while
+        closing the TensorFlow session.
     """
     with self._extend_lock:
       if self._opened and not self._closed:
         self._closed = True
-        try:
-          status = tf_session.TF_NewStatus()
+        with errors.raise_exception_on_not_ok_status() as status:
           tf_session.TF_CloseSession(self._session, status)
-          if tf_session.TF_GetCode(status) != 0:
-            raise RuntimeError(compat.as_text(tf_session.TF_Message(status)))
-        finally:
-          tf_session.TF_DeleteStatus(status)
 
   def __del__(self):
     self.close()
-    try:
-      status = tf_session.TF_NewStatus()
-      if self._session is not None:
+    if self._session is not None:
+      with errors.raise_exception_on_not_ok_status() as status:
         tf_session.TF_DeleteSession(self._session, status)
-        if tf_session.TF_GetCode(status) != 0:
-          raise RuntimeError(compat.as_text(tf_session.TF_Message(status)))
-        self._session = None
-    finally:
-      tf_session.TF_DeleteStatus(status)
+      self._session = None
 
   @property
   def graph(self):
@@ -161,7 +187,7 @@ class BaseSession(SessionInterface):
       A graph_pb2.GraphDef proto containing nodes for all of the Operations in
       the underlying TensorFlow graph.
     """
-    return self._graph.as_graph_def()
+    return self._graph.as_graph_def(add_shapes=self._add_shapes)
 
   @property
   def sess_str(self):
@@ -266,24 +292,25 @@ class BaseSession(SessionInterface):
     and evaluate every `Tensor` in `fetches`, substituting the values in
     `feed_dict` for the corresponding input values.
 
-    The `fetches` argument may be a list of graph elements or a single
-    graph element, and these determine the return value of this
+    The `fetches` argument may be a single graph element, a list of
+    graph elements, or a dictionary whose values are the above. The type of
+    `fetches` determines the return value of this
     method. A graph element can be one of the following types:
 
-    * If the *i*th element of `fetches` is an
-      [`Operation`](../../api_docs/python/framework.md#Operation), the *i*th
-      return value will be `None`.
-    * If the *i*th element of `fetches` is a
-      [`Tensor`](../../api_docs/python/framework.md#Tensor), the *i*th return
-      value will be a numpy ndarray containing the value of that tensor.
-    * If the *i*th element of `fetches` is a
+    * If an element of `fetches` is an
+      [`Operation`](../../api_docs/python/framework.md#Operation), the
+      corresponding fetched value will be `None`.
+    * If an element of `fetches` is a
+      [`Tensor`](../../api_docs/python/framework.md#Tensor), the corresponding
+      fetched value will be a numpy ndarray containing the value of that tensor.
+    * If an element of `fetches` is a
       [`SparseTensor`](../../api_docs/python/sparse_ops.md#SparseTensor),
-      the *i*th return value will be a
+      the corresponding fetched value will be a
       [`SparseTensorValue`](../../api_docs/python/sparse_ops.md#SparseTensorValue)
       containing the value of that sparse tensor.
-    * If the *i*th element of `fetches` is produced by a `get_tensor_handle` op,
-      the *i*th return value will be a numpy ndarray containing the handle of
-      that tensor.
+    * If an element of `fetches` is produced by a `get_tensor_handle` op,
+      the corresponding fetched value will be a numpy ndarray containing the
+      handle of that tensor.
 
     The optional `feed_dict` argument allows the caller to override
     the value of tensors in the graph. Each key in `feed_dict` can be
@@ -313,8 +340,9 @@ class BaseSession(SessionInterface):
     collected into this argument and passed back.
 
     Args:
-      fetches: A single graph element, or a list of graph elements
-        (described above).
+      fetches: A single graph element, a list of graph elements,
+        or a dictionary whose values are graph elements or lists of graph
+        elements (described above).
       feed_dict: A dictionary that maps graph elements to values
         (described above).
       options: A [`RunOptions`] protocol buffer
@@ -322,7 +350,8 @@ class BaseSession(SessionInterface):
 
     Returns:
       Either a single value if `fetches` is a single graph element, or
-      a list of values if `fetches` is a list (described above).
+      a list of values if `fetches` is a list, or a dictionary with the
+      same keys as `fetches` if that is a dictionary (described above).
 
     Raises:
       RuntimeError: If this `Session` is in an invalid state (e.g. has been
@@ -379,14 +408,20 @@ class BaseSession(SessionInterface):
 
     Args:
       handle: A handle for a sequence of partial runs.
-      fetches: A single graph element, or a list of graph elements
-        (described above).
+      fetches: A single graph element, a list of graph elements,
+        or a dictionary whose values are graph elements or lists of graph
+        elements (see documentation for `run`).
       feed_dict: A dictionary that maps graph elements to values
         (described above).
 
     Returns:
       Either a single value if `fetches` is a single graph element, or
-      a list of values if `fetches` is a list (described above).
+      a list of values if `fetches` is a list, or a dictionary with the
+      same keys as `fetches` if that is a dictionary
+      (see documentation for `run`).
+
+    Raises:
+      tf.errors.OpError: Or one of its subclasses on error.
     """
     return self._run(handle, fetches, feed_dict, None, None)
 
@@ -409,6 +444,7 @@ class BaseSession(SessionInterface):
       RuntimeError: If this `Session` is in an invalid state (e.g. has been
         closed).
       TypeError: If `fetches` or `feed_dict` keys are of an inappropriate type.
+      tf.errors.OpError: Or one of its subclasses if a TensorFlow error happens.
     """
     def _feed_fn(feed):
       for tensor_type, _, _, feed_fn in BaseSession._REGISTERED_EXPANSIONS:
@@ -449,11 +485,17 @@ class BaseSession(SessionInterface):
     # Set up a graph with feeds and fetches for partial run.
     def _setup_fn(session, feed_list, fetch_list, target_list):
       self._extend_graph()
-      return tf_session.TF_PRunSetup(session, feed_list, fetch_list,
-                                     target_list)
+      with errors.raise_exception_on_not_ok_status() as status:
+        return tf_session.TF_PRunSetup(session, feed_list, fetch_list,
+                                       target_list, status)
 
     return self._do_call(_setup_fn, self._session, feed_list, unique_fetches,
                          target_list)
+
+  def _assert_fetchable(self, op):
+    if not self.graph.is_fetchable(op):
+      raise ValueError(
+          'Operation %r has been marked as not fetchable.' % op.name)
 
   def _process_fetches(self, fetches):
     """Validate and process fetches."""
@@ -483,8 +525,10 @@ class BaseSession(SessionInterface):
                                                 allow_operation=True)
           fetch_name = compat.as_bytes(fetch_t.name)
           if isinstance(fetch_t, ops.Operation):
+            self._assert_fetchable(fetch_t)
             target_list.append(fetch_name)
           else:
+            self._assert_fetchable(fetch_t.op)
             subfetch_names.append(fetch_name)
           # Remember the fetch if it is for a tensor handle.
           if (isinstance(fetch_t, ops.Tensor) and
@@ -521,6 +565,20 @@ class BaseSession(SessionInterface):
     if self.graph.version == 0:
       raise RuntimeError('The Session graph is empty.  Add operations to the '
                          'graph before calling run().')
+
+    # Flatten/unflatten fetched values.
+    if isinstance(fetches, (list, tuple)):
+      # fetches is already a list or tuple; nothing to do.
+      unflatten = lambda fetched: fetched
+    elif isinstance(fetches, dict):
+      # fetches is a dictionary; flatten the values and map fetched
+      # values back into to a dictionary.
+      orig_fetches, fetches = fetches, _flatten1(fetches.values())
+      unflatten = lambda fetched: _unflatten_fetches(orig_fetches, fetched)
+    else:
+      # fetches is a singleton.
+      fetches = [fetches]
+      unflatten = lambda fetched: fetched[0]
 
     # Validate and process fetches.
     processed_fetches = self._process_fetches(fetches)
@@ -600,10 +658,7 @@ class BaseSession(SessionInterface):
       else:
         ret.append(None)
 
-    if isinstance(fetches, (list, tuple)):
-      return ret
-    else:
-      return ret[0]
+    return unflatten(ret)
 
   # Captures the name of a node in an error status.
   _NODEDEF_NAME_RE = re.compile(r'\[\[Node: ([^ ]*?) =')
@@ -628,23 +683,25 @@ class BaseSession(SessionInterface):
       `fetch_list`.  If the ith element of `fetch_list` contains the
       name of an operation, the first Tensor output of that operation
       will be returned for that element.
+
+    Raises:
+      tf.errors.OpError: Or one of its subclasses on error.
     """
     def _run_fn(session, feed_dict, fetch_list, target_list, options,
                 run_metadata):
       # Ensure any changes to the graph are reflected in the runtime.
       self._extend_graph()
-      if options:
+      with errors.raise_exception_on_not_ok_status() as status:
         return tf_session.TF_Run(session, options,
                                  feed_dict, fetch_list, target_list,
-                                 run_metadata)
-      else:
-        return tf_session.TF_Run(
-            session, None, feed_dict, fetch_list, target_list, None)
+                                 status, run_metadata)
 
     def _prun_fn(session, handle, feed_dict, fetch_list):
       if target_list:
         raise RuntimeError('partial_run() requires empty target_list.')
-      return tf_session.TF_PRun(session, handle, feed_dict, fetch_list)
+      with errors.raise_exception_on_not_ok_status() as status:
+        return tf_session.TF_PRun(session, handle, feed_dict, fetch_list,
+                                  status)
 
     if handle is None:
       return self._do_call(_run_fn, self._session, feed_dict, fetch_list,
@@ -656,9 +713,9 @@ class BaseSession(SessionInterface):
   def _do_call(self, fn, *args):
     try:
       return fn(*args)
-    except tf_session.StatusNotOK as e:
-      error_message = compat.as_text(e.error_message)
-      m = BaseSession._NODEDEF_NAME_RE.search(error_message)
+    except errors.OpError as e:
+      message = compat.as_text(e.message)
+      m = BaseSession._NODEDEF_NAME_RE.search(message)
       node_def = None
       op = None
       if m is not None:
@@ -668,27 +725,20 @@ class BaseSession(SessionInterface):
           node_def = op.node_def
         except KeyError:
           pass
-      # pylint: disable=protected-access
-      raise errors._make_specific_exception(node_def, op, error_message,
-                                            e.code)
-      # pylint: enable=protected-access
+      raise type(e)(node_def, op, message)
 
   def _extend_graph(self):
     # Ensure any changes to the graph are reflected in the runtime.
     with self._extend_lock:
       if self._graph.version > self._current_version:
         graph_def = self._graph.as_graph_def(
-            from_version=self._current_version)
+            from_version=self._current_version,
+            add_shapes=self._add_shapes)
 
-        try:
-          status = tf_session.TF_NewStatus()
+        with errors.raise_exception_on_not_ok_status() as status:
           tf_session.TF_ExtendGraph(
               self._session, graph_def.SerializeToString(), status)
-          if tf_session.TF_GetCode(status) != 0:
-            raise RuntimeError(compat.as_text(tf_session.TF_Message(status)))
-          self._opened = True
-        finally:
-          tf_session.TF_DeleteStatus(status)
+        self._opened = True
 
         self._current_version = self._graph.version
 
@@ -903,12 +953,19 @@ class InteractiveSession(BaseSession):
       graph: (Optional.) The `Graph` to be launched (described above).
       config: (Optional) `ConfigProto` proto used to configure the session.
     """
+    if not config:
+      config = config_pb2.ConfigProto()
+    # Interactive sessions always place pruned graphs.
+    config.graph_options.place_pruned_graph = True
+
     super(InteractiveSession, self).__init__(target, graph, config)
     self._default_session = self.as_default()
+    self._default_session.enforce_nesting = False
     self._default_session.__enter__()
     self._explicit_graph = graph
     if self._explicit_graph is not None:
       self._default_graph = graph.as_default()
+      self._default_graph.enforce_nesting = False
       self._default_graph.__enter__()
 
   def close(self):

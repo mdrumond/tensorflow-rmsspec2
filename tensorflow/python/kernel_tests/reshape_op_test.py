@@ -1,4 +1,4 @@
-# Copyright 2015 Google Inc. All Rights Reserved.
+# Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -48,8 +48,12 @@ class ReshapeTest(tf.test.TestCase):
     x = np.arange(1., 7.).reshape([1, 6]).astype(np.int32)
     self._testBothReshape(x, [2, 3])
 
-  def testSComplexBasic(self):
+  def testComplex64Basic(self):
     x = np.arange(1., 7.).reshape([1, 6]).astype(np.complex64)
+    self._testBothReshape(x, [2, 3])
+
+  def testComplex128Basic(self):
+    x = np.arange(1., 7.).reshape([1, 6]).astype(np.complex128)
     self._testBothReshape(x, [2, 3])
 
   def testFloatReshapeThreeDimensions(self):

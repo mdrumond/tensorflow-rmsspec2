@@ -1,4 +1,4 @@
-# Copyright 2015 Google Inc. All Rights Reserved.
+# Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -20,6 +20,12 @@ from __future__ import print_function
 
 import numpy as np
 import tensorflow as tf
+
+
+@tf.RegisterGradient("BadGrad")
+def _bad_grad(unused_op, grad):
+  """A gradient that returns the wrong shape."""
+  return tf.transpose(grad)
 
 
 class GradientCheckerTest(tf.test.TestCase):
@@ -132,6 +138,27 @@ class GradientCheckerTest(tf.test.TestCase):
       self.assertAllEqual(correct, analytical)
       self.assertAllClose(correct, numerical, rtol=3e-6)
       self.assertLess(tf.test.compute_gradient_error(x, size, y, size), 2e-5)
+
+  def testEmptySucceeds(self):
+    with self.test_session():
+      x = tf.placeholder(tf.float32)
+      y = tf.identity(x)
+      for grad in tf.test.compute_gradient(x, (0, 3), y, (0, 3)):
+        self.assertEqual(grad.shape, (0, 0))
+      error = tf.test.compute_gradient_error(x, (0, 3), y, (0, 3))
+      self.assertEqual(error, 0)
+
+  def testEmptyFails(self):
+    with tf.Graph().as_default() as g:
+      with self.test_session(graph=g):
+        x = tf.placeholder(tf.float32)
+        with g.gradient_override_map({"Identity": "BadGrad"}):
+          y = tf.identity(x)
+        bad = r"Empty gradient has wrong shape: expected \(0, 3\), got \(3, 0\)"
+        with self.assertRaisesRegexp(ValueError, bad):
+          tf.test.compute_gradient(x, (0, 3), y, (0, 3))
+        with self.assertRaisesRegexp(ValueError, bad):
+          tf.test.compute_gradient_error(x, (0, 3), y, (0, 3))
 
 
 # Gradient checker for MNIST.

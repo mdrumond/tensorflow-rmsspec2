@@ -1,4 +1,4 @@
-# Copyright 2015 Google Inc. All Rights Reserved.
+# Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -605,7 +605,7 @@ def resize_images(images,
     new_height: integer.
     new_width: integer.
     method: ResizeMethod.  Defaults to `ResizeMethod.BILINEAR`.
-    align_corners: bool. If true, exactly align all 4 cornets of the input and
+    align_corners: bool. If true, exactly align all 4 corners of the input and
                    output. Defaults to `false`.
 
   Raises:

@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -123,7 +123,8 @@ void ConcatCPU(DeviceBase* d,
       }
     }
   };
-  Shard(num_threads, worker_threads->workers, output->size(), sizeof(T), work);
+  Shard(worker_threads->num_threads, worker_threads->workers, output->size(),
+        sizeof(T), work);
 }
 
 #define REGISTER(T)                                                            \
@@ -134,6 +135,8 @@ void ConcatCPU(DeviceBase* d,
 TF_CALL_ALL_TYPES(REGISTER)
 REGISTER(quint8)
 REGISTER(qint8)
+REGISTER(quint16)
+REGISTER(qint16)
 REGISTER(qint32)
 REGISTER(bfloat16)
 

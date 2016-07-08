@@ -1,4 +1,4 @@
-# Copyright 2015 Google Inc. All Rights Reserved.
+# Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -94,8 +94,8 @@ print(sess.run(var))
 @@random_uniform
 @@random_shuffle
 @@random_crop
+@@multinomial
 @@set_random_seed
-
 """
 
 # Must be separate from array_ops to avoid a cyclic dependency.

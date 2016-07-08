@@ -1,179 +1,213 @@
+# Copyright 2016 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 """Deep Neural Network estimators."""
-#  Copyright 2015-present The Scikit Flow Authors. All Rights Reserved.
-#
-#  Licensed under the Apache License, Version 2.0 (the "License");
-#  you may not use this file except in compliance with the License.
-#  You may obtain a copy of the License at
-#
-#   http://www.apache.org/licenses/LICENSE-2.0
-#
-#  Unless required by applicable law or agreed to in writing, software
-#  distributed under the License is distributed on an "AS IS" BASIS,
-#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#  See the License for the specific language governing permissions and
-#  limitations under the License.
+
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+from tensorflow.contrib import layers
 from tensorflow.contrib.learn.python.learn.estimators import _sklearn
-from tensorflow.contrib.learn.python.learn.estimators.base import TensorFlowEstimator
-from tensorflow.contrib.learn.python.learn import models
+from tensorflow.contrib.learn.python.learn.estimators import dnn_linear_combined
+from tensorflow.contrib.learn.python.learn.estimators.base import DeprecatedMixin
+from tensorflow.python.ops import nn
 
 
-class TensorFlowDNNClassifier(TensorFlowEstimator, _sklearn.ClassifierMixin):
-  """TensorFlow DNN Classifier model.
+class DNNClassifier(dnn_linear_combined.DNNLinearCombinedClassifier):
+  """A classifier for TensorFlow DNN models.
 
-  Parameters:
-    hidden_units: List of hidden units per layer.
-    n_classes: Number of classes in the target.
-    batch_size: Mini batch size.
-    steps: Number of steps to run over data.
-    optimizer: Optimizer name (or class), for example "SGD", "Adam", "Adagrad".
-    learning_rate: If this is constant float value, no decay function is used.
-      Instead, a customized decay function can be passed that accepts
-      global_step as parameter and returns a Tensor.
-      e.g. exponential decay function:
-      def exp_decay(global_step):
-          return tf.train.exponential_decay(
-              learning_rate=0.1, global_step,
-              decay_steps=2, decay_rate=0.001)
-    class_weight: None or list of n_classes floats. Weight associated with
-      classes for loss computation. If not given, all classes are
-      supposed to have weight one.
-    continue_training: when continue_training is True, once initialized
-      model will be continuely trained on every call of fit.
-    config: RunConfig object that controls the configurations of the
-      session, e.g. num_cores, gpu_memory_fraction, etc.
-    dropout: When not None, the probability we will drop out a given coordinate.
+  Example:
+
+  ```python
+  education = sparse_column_with_hash_bucket(column_name="education",
+                                             hash_bucket_size=1000)
+  occupation = sparse_column_with_hash_bucket(column_name="occupation",
+                                              hash_bucket_size=1000)
+
+  education_emb = embedding_column(sparse_id_column=education, dimension=16,
+                                   combiner="sum")
+  occupation_emb = embedding_column(sparse_id_column=occupation, dimension=16,
+                                   combiner="sum")
+
+  estimator = DNNClassifier(
+      feature_columns=[education_emb, occupation_emb],
+      hidden_units=[1024, 512, 256])
+
+  # Or estimator using the ProximalAdagradOptimizer optimizer with
+  # regularization.
+  estimator = DNNClassifier(
+      feature_columns=[education_emb, occupation_emb],
+      hidden_units=[1024, 512, 256],
+      optimizer=tf.train.ProximalAdagradOptimizer(
+        learning_rate=0.1,
+        l1_regularization_strength=0.001
+      ))
+
+  # Input builders
+  def input_fn_train: # returns x, Y
+    pass
+  estimator.fit(input_fn=input_fn_train)
+
+  def input_fn_eval: # returns x, Y
+    pass
+  estimator.evaluate(input_fn=input_fn_eval)
+  estimator.predict(x=x)
+  ```
+
+  Input of `fit` and `evaluate` should have following features,
+    otherwise there will be a `KeyError`:
+      if `weight_column_name` is not `None`, a feature with
+        `key=weight_column_name` whose value is a `Tensor`.
+      for each `column` in `feature_columns`:
+      - if `column` is a `SparseColumn`, a feature with `key=column.name`
+        whose `value` is a `SparseTensor`.
+      - if `column` is a `RealValuedColumn, a feature with `key=column.name`
+        whose `value` is a `Tensor`.
+      - if `feauture_columns` is None, then `input` must contains only real
+        valued `Tensor`.
   """
 
   def __init__(self,
                hidden_units,
-               n_classes,
-               batch_size=32,
-               steps=200,
-               optimizer='Adagrad',
-               learning_rate=0.1,
-               class_weight=None,
-               clip_gradients=5.0,
-               continue_training=False,
-               config=None,
-               verbose=1,
-               dropout=None):
-    self.hidden_units = hidden_units
-    self.dropout = dropout
-    super(TensorFlowDNNClassifier, self).__init__(
-        model_fn=self._model_fn,
-        n_classes=n_classes,
-        batch_size=batch_size,
-        steps=steps,
-        optimizer=optimizer,
-        learning_rate=learning_rate,
-        class_weight=class_weight,
-        clip_gradients=clip_gradients,
-        continue_training=continue_training,
-        config=config,
-        verbose=verbose)
+               feature_columns=None,
+               model_dir=None,
+               n_classes=2,
+               weight_column_name=None,
+               optimizer=None,
+               activation_fn=nn.relu,
+               dropout=None,
+               config=None):
+    super(DNNClassifier, self).__init__(model_dir=model_dir,
+                                        n_classes=n_classes,
+                                        weight_column_name=weight_column_name,
+                                        dnn_feature_columns=feature_columns,
+                                        dnn_optimizer=optimizer,
+                                        dnn_hidden_units=hidden_units,
+                                        dnn_activation_fn=activation_fn,
+                                        dnn_dropout=dropout,
+                                        config=config)
 
-  def _model_fn(self, X, y):
-    return models.get_dnn_model(self.hidden_units,
-                                models.logistic_regression,
-                                dropout=self.dropout)(X, y)
+  def _get_train_ops(self, features, targets):
+    """See base class."""
+    if self._dnn_feature_columns is None:
+      self._dnn_feature_columns = layers.infer_real_valued_columns(features)
+    return super(DNNClassifier, self)._get_train_ops(features, targets)
 
   @property
   def weights_(self):
-    """Returns weights of the DNN weight layers."""
-    weights = []
-    for layer in range(len(self.hidden_units)):
-      weights.append(self.get_tensor_value('dnn/layer%d/Linear/Matrix:0' %
-                                           layer))
-    weights.append(self.get_tensor_value('logistic_regression/weights:0'))
-    return weights
+    return self.dnn_weights_
 
   @property
   def bias_(self):
-    """Returns bias of the DNN's bias layers."""
-    biases = []
-    for layer in range(len(self.hidden_units)):
-      biases.append(self.get_tensor_value('dnn/layer%d/Linear/Bias:0' % layer))
-    biases.append(self.get_tensor_value('logistic_regression/bias:0'))
-    return biases
+    return self.dnn_bias_
 
 
-class TensorFlowDNNRegressor(TensorFlowEstimator, _sklearn.RegressorMixin):
-  """TensorFlow DNN Regressor model.
+class DNNRegressor(dnn_linear_combined.DNNLinearCombinedRegressor):
+  """A regressor for TensorFlow DNN models.
 
-  Parameters:
-    hidden_units: List of hidden units per layer.
-    batch_size: Mini batch size.
-    steps: Number of steps to run over data.
-    optimizer: Optimizer name (or class), for example "SGD", "Adam", "Adagrad".
-    learning_rate: If this is constant float value, no decay function is
-      used. Instead, a customized decay function can be passed that accepts
-      global_step as parameter and returns a Tensor.
-      e.g. exponential decay function:
-      def exp_decay(global_step):
-          return tf.train.exponential_decay(
-              learning_rate=0.1, global_step,
-              decay_steps=2, decay_rate=0.001)
-    continue_training: when continue_training is True, once initialized
-      model will be continuely trained on every call of fit.
-    config: RunConfig object that controls the configurations of the session,
-      e.g. num_cores, gpu_memory_fraction, etc.
-    verbose: Controls the verbosity, possible values:
-      0: the algorithm and debug information is muted.
-      1: trainer prints the progress.
-      2: log device placement is printed.
-    dropout: When not None, the probability we will drop out a given coordinate.
+  Example:
+
+  ```python
+  education = sparse_column_with_hash_bucket(column_name="education",
+                                             hash_bucket_size=1000)
+  occupation = sparse_column_with_hash_bucket(column_name="occupation",
+                                              hash_bucket_size=1000)
+
+  education_emb = embedding_column(sparse_id_column=education, dimension=16,
+                                   combiner="sum")
+  occupation_emb = embedding_column(sparse_id_column=occupation, dimension=16,
+                                   combiner="sum")
+
+  estimator = DNNRegressor(
+      feature_columns=[education_emb, occupation_emb],
+      hidden_units=[1024, 512, 256])
+
+  # Or estimator using the ProximalAdagradOptimizer optimizer with
+  # regularization.
+  estimator = DNNRegressor(
+      feature_columns=[education_emb, occupation_emb],
+      hidden_units=[1024, 512, 256],
+      optimizer=tf.train.ProximalAdagradOptimizer(
+        learning_rate=0.1,
+        l1_regularization_strength=0.001
+      ))
+
+  # Input builders
+  def input_fn_train: # returns x, Y
+    pass
+  estimator.fit(input_fn=input_fn_train)
+
+  def input_fn_eval: # returns x, Y
+    pass
+  estimator.evaluate(input_fn=input_fn_eval)
+  estimator.predict(x=x)
+  ```
+
+  Input of `fit` and `evaluate` should have following features,
+    otherwise there will be a `KeyError`:
+      if `weight_column_name` is not `None`, a feature with
+        `key=weight_column_name` whose value is a `Tensor`.
+      for each `column` in `feature_columns`:
+      - if `column` is a `SparseColumn`, a feature with `key=column.name`
+        whose `value` is a `SparseTensor`.
+      - if `column` is a `RealValuedColumn, a feature with `key=column.name`
+        whose `value` is a `Tensor`.
+      - if `feauture_columns` is None, then `input` must contains only real
+        valued `Tensor`.
   """
 
   def __init__(self,
                hidden_units,
-               n_classes=0,
-               batch_size=32,
-               steps=200,
-               optimizer='Adagrad',
-               learning_rate=0.1,
-               clip_gradients=5.0,
-               continue_training=False,
-               config=None,
-               verbose=1,
-               dropout=None):
-    self.hidden_units = hidden_units
-    self.dropout = dropout
-    super(TensorFlowDNNRegressor, self).__init__(
-        model_fn=self._model_fn,
-        n_classes=n_classes,
-        batch_size=batch_size,
-        steps=steps,
-        optimizer=optimizer,
-        learning_rate=learning_rate,
-        clip_gradients=clip_gradients,
-        continue_training=continue_training,
-        config=config,
-        verbose=verbose)
+               feature_columns=None,
+               model_dir=None,
+               weight_column_name=None,
+               optimizer=None,
+               activation_fn=nn.relu,
+               dropout=None,
+               config=None):
+    super(DNNRegressor, self).__init__(model_dir=model_dir,
+                                       weight_column_name=weight_column_name,
+                                       dnn_feature_columns=feature_columns,
+                                       dnn_optimizer=optimizer,
+                                       dnn_hidden_units=hidden_units,
+                                       dnn_activation_fn=activation_fn,
+                                       dnn_dropout=dropout,
+                                       config=config)
 
-  def _model_fn(self, X, y):
-    return models.get_dnn_model(self.hidden_units,
-                                models.linear_regression,
-                                dropout=self.dropout)(X, y)
+  def _get_train_ops(self, features, targets):
+    """See base class."""
+    if self._dnn_feature_columns is None:
+      self._dnn_feature_columns = layers.infer_real_valued_columns(features)
+    return super(DNNRegressor, self)._get_train_ops(features, targets)
 
   @property
   def weights_(self):
-    """Returns weights of the DNN weight layers."""
-    weights = []
-    for layer in range(len(self.hidden_units)):
-      weights.append(self.get_tensor_value('dnn/layer%d/Linear/Matrix:0' %
-                                           layer))
-    weights.append(self.get_tensor_value('linear_regression/weights:0'))
-    return weights
+    return self.dnn_weights_
 
   @property
   def bias_(self):
-    """Returns bias of the DNN's bias layers."""
-    biases = []
-    for layer in range(len(self.hidden_units)):
-      biases.append(self.get_tensor_value('dnn/layer%d/Linear/Bias:0' % layer))
-    biases.append(self.get_tensor_value('linear_regression/bias:0'))
-    return biases
+    return self.dnn_bias_
+
+
+# TensorFlowDNNClassifier and TensorFlowDNNRegressor are deprecated.
+class TensorFlowDNNClassifier(DeprecatedMixin, DNNClassifier,
+                              _sklearn.ClassifierMixin):
+  pass
+
+
+class TensorFlowDNNRegressor(DeprecatedMixin, DNNRegressor,
+                             _sklearn.RegressorMixin):
+  pass

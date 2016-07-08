@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -161,6 +161,10 @@ class Env {
   /// \brief Returns the number of micro-seconds since some fixed point in
   /// time. Only useful for computing deltas of time.
   virtual uint64 NowMicros() = 0;
+
+  /// \brief Returns the number of seconds since some fixed point in
+  /// time. Only useful for computing deltas of time.
+  virtual uint64 NowSeconds() { return NowMicros() / 1000000L; }
 
   /// Sleeps/delays the thread for the prescribed number of micro-seconds.
   virtual void SleepForMicroseconds(int micros) = 0;

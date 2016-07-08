@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -202,6 +202,9 @@ OpKernelContext::OpKernelContext(Params* params, int noutputs)
                                          params_->op_device_context,
                                          eigen_gpu_allocator);
   record_tensor_accesses_ = params_->device->RequiresRecordingAccessedTensors();
+  if (record_tensor_accesses_) {
+    referenced_tensors_.Init();
+  }
 }
 
 OpKernelContext::~OpKernelContext() {
@@ -210,6 +213,7 @@ OpKernelContext::~OpKernelContext() {
       delete value.tensor;
     }
   }
+  if (record_tensor_accesses_) referenced_tensors_.Destroy();
 }
 
 Allocator* OpKernelContext::get_allocator(AllocatorAttributes attr) {
@@ -238,7 +242,7 @@ void OpKernelContext::SetStatus(const Status& status) {
 void OpKernelContext::really_record_tensor_reference(const Tensor& tensor) {
   mutex_lock l(mu_);
   // Keep a reference to the underlying memory around.
-  referenced_tensors_.Add(tensor);
+  referenced_tensors_->Add(tensor);
 }
 
 Status OpKernelContext::input(StringPiece name, const Tensor** tensor) {
@@ -447,12 +451,12 @@ Status OpKernelContext::allocate_tensor(
     return errors::ResourceExhausted("OOM when allocating tensor with shape",
                                      shape.DebugString());
   }
-  if (LogMemory::IsEnabled()) {
+  if (params_->log_memory) {
     LogMemory::RecordTensorAllocation(params_->op_kernel->name(),
                                       params_->step_id, new_tensor);
   }
-  *out_tensor = new_tensor;
   record_tensor_reference(new_tensor);
+  *out_tensor = std::move(new_tensor);
   return Status::OK();
 }
 

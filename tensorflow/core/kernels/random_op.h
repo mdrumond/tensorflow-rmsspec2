@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -24,6 +24,11 @@ namespace functor {
 
 template <typename Device, class Distribution>
 struct FillPhiloxRandom;
+
+// TODO(zongheng): migrate Multinomial out of random_op.
+// Generic helper functor for the Multinomial Op.
+template <typename Device, typename T>
+struct MultinomialFunctor;
 
 }  // namespace functor
 }  // namespace tensorflow

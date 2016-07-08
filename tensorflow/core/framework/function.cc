@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -705,6 +705,10 @@ Status FunctionCallFrame::SetRetval(int index, const Tensor& val) {
   }
   return Status::OK();
 }
+
+FunctionLibraryDefinition::FunctionLibraryDefinition(
+    const FunctionLibraryDefinition& other)
+    : function_defs_(other.function_defs_), func_grad_(other.func_grad_) {}
 
 FunctionLibraryDefinition::FunctionLibraryDefinition(
     const FunctionDefLibrary& def_lib)

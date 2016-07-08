@@ -1,4 +1,4 @@
-# Copyright 2015 Google Inc. All Rights Reserved.
+# Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -225,7 +225,7 @@ def parse_example(serialized, features, name=None, example_names=None):
   features: {
       "kw": VarLenFeature(tf.string),
       "dank": VarLenFeature(tf.int64),
-      "gps": VarLenFeature(tf.float),
+      "gps": VarLenFeature(tf.float32),
   }
   ```
 

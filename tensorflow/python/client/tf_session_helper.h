@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -64,7 +64,7 @@ Safe_PyObjectPtr make_safe(PyObject* o);
 // message.
 void TF_Run_wrapper(TF_Session* session, const TF_Buffer* run_options,
                     const FeedVector& inputs, const NameVector& output_names,
-                    const NameVector& target_nodes, Status* out_status,
+                    const NameVector& target_nodes, TF_Status* out_status,
                     PyObjectVector* out_values, TF_Buffer* run_outputs);
 
 // Set up the graph with the intended feeds and fetches for partial run.
@@ -78,7 +78,7 @@ void TF_Run_wrapper(TF_Session* session, const TF_Buffer* run_options,
 // NOTE: This is EXPERIMENTAL and subject to change.
 void TF_PRunSetup_wrapper(TF_Session* session, const NameVector& input_names,
                           const NameVector& output_names,
-                          const NameVector& target_nodes, Status* out_status,
+                          const NameVector& target_nodes, TF_Status* out_status,
                           char** out_handle);
 
 // Continue to run the graph with additional feeds and fetches. The
@@ -94,7 +94,7 @@ void TF_PRunSetup_wrapper(TF_Session* session, const NameVector& input_names,
 // NOTE: This is EXPERIMENTAL and subject to change.
 void TF_PRun_wrapper(TF_Session* session, const char* handle,
                      const FeedVector& inputs, const NameVector& output_names,
-                     Status* out_status, PyObjectVector* out_values);
+                     TF_Status* out_status, PyObjectVector* out_values);
 
 // Convenience wrapper around EqualGraphDef to make it easier to wrap.
 // Returns an explanation if a difference is found, or the empty string

@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -31,7 +31,6 @@ limitations under the License.
 #include "tensorflow/core/kernels/concat_lib.h"
 #include "tensorflow/core/kernels/split_lib.h"
 #include "tensorflow/core/kernels/tensor_array.h"
-#include "tensorflow/core/lib/core/refcount.h"
 #include "tensorflow/core/lib/core/errors.h"
 #include "tensorflow/core/lib/core/refcount.h"
 #include "tensorflow/core/lib/strings/strcat.h"
@@ -148,14 +147,18 @@ class TensorArrayOp : public TensorArrayCreationOp {
     const int32 size = tensor_size->scalar<int32>()();
 
     auto handle = tensor_array_output_handle->flat<string>();
+    string unique_tensor_array_name =
+        strings::StrCat(tensor_array_name_, "_",
+                        TensorArray::tensor_array_counter.fetch_add(1));
     handle(0) = "_tensor_arrays";
-    handle(1) = tensor_array_name_;
+    handle(1) = unique_tensor_array_name;
 
     TensorArray* tensor_array = new TensorArray(
         dtype_, *tensor_array_output_handle, size, dynamic_size_,
         false /* multiple_writes_aggregate */, clear_after_read_);
 
-    TF_RETURN_IF_ERROR(rm->Create(handle(0), tensor_array_name_, tensor_array));
+    TF_RETURN_IF_ERROR(
+        rm->Create(handle(0), unique_tensor_array_name, tensor_array));
 
     *output_tensor_array = tensor_array;
 
@@ -235,11 +238,12 @@ class TensorArrayGradOp : public TensorArrayCreationOp {
     }
 
     auto creator = [this, tensor_array, array_size,
-                    tensor_array_output_handle](TensorArray** ret) {
+                    tensor_array_output_handle](TensorArray** ret) -> Status {
       *ret = new TensorArray(
           tensor_array->ElemType(), *tensor_array_output_handle, array_size,
           false /* dynamic_size */, true /* multiple_writes_aggregate */,
           true /* close_after_read */);
+      TF_RETURN_IF_ERROR((*ret)->CopyShapesFrom(tensor_array));
       return Status::OK();
     };
 
@@ -333,6 +337,7 @@ REGISTER_GPU(bfloat16);
 
 // READ ***********************************************************************
 
+template <typename Device, typename T>
 class TensorArrayReadOp : public OpKernel {
  public:
   explicit TensorArrayReadOp(OpKernelConstruction* context)
@@ -362,18 +367,24 @@ class TensorArrayReadOp : public OpKernel {
             "TensorArray dtype is ", DataTypeString(tensor_array->ElemType()),
             " but Op requested dtype ", DataTypeString(dtype_), "."));
     PersistentTensor value;
-    OP_REQUIRES_OK(ctx, tensor_array->Read(index, &value));
+    Status s = tensor_array->Read<Device, T>(ctx, index, &value);
+    OP_REQUIRES_OK(ctx, s);
     ctx->set_output(0, *value.AccessTensor(ctx));
   }
-
-  bool IsExpensive() override { return false; }
 
  private:
   DataType dtype_;
 };
 
-REGISTER_KERNEL_BUILDER(Name("TensorArrayRead").Device(DEVICE_CPU),
-                        TensorArrayReadOp);
+#define REGISTER_READ(type)                                   \
+  REGISTER_KERNEL_BUILDER(Name("TensorArrayRead")             \
+                              .Device(DEVICE_CPU)             \
+                              .TypeConstraint<type>("dtype"), \
+                          TensorArrayReadOp<CPUDevice, type>);
+
+TF_CALL_ALL_TYPES(REGISTER_READ)
+
+#undef REGISTER_READ
 
 #if GOOGLE_CUDA
 
@@ -383,7 +394,7 @@ REGISTER_KERNEL_BUILDER(Name("TensorArrayRead").Device(DEVICE_CPU),
                               .TypeConstraint<type>("dtype") \
                               .HostMemory("handle")          \
                               .HostMemory("index"),          \
-                          TensorArrayReadOp);
+                          TensorArrayReadOp<GPUDevice, type>);
 
 TF_CALL_GPU_NUMBER_TYPES(REGISTER_GPU);
 REGISTER_GPU(bfloat16);
@@ -431,7 +442,8 @@ class TensorArrayPackOp : public OpKernel {
     // Read all the PersistentTensors into a vector to keep track of
     // their memory.
     std::vector<PersistentTensor> values;
-    OP_REQUIRES_OK(ctx, tensor_array->ReadMany(&values));
+    Status s = tensor_array->ReadMany<Device, T>(ctx, &values);
+    OP_REQUIRES_OK(ctx, s);
 
     const Tensor* value_0_t = values[0].AccessTensor(ctx);
     TensorShape output_shape(value_0_t->shape());
@@ -559,7 +571,8 @@ class TensorArrayConcatOp : public OpKernel {
     // Read all the PersistentTensors into a vector to keep track of
     // their memory.
     std::vector<PersistentTensor> values;
-    OP_REQUIRES_OK(ctx, tensor_array->ReadMany(&values));
+    Status s = tensor_array->ReadMany<Device, T>(ctx, &values);
+    OP_REQUIRES_OK(ctx, s);
 
     std::vector<const Tensor*> value_tensors;
     value_tensors.resize(values.size());

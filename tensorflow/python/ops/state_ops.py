@@ -1,4 +1,4 @@
-# Copyright 2015 Google Inc. All Rights Reserved.
+# Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -31,6 +31,7 @@ collected in the graph.
 @@initialize_variables
 @@initialize_local_variables
 @@is_variable_initialized
+@@report_uninitialized_variables
 @@assert_variables_initialized
 
 ## Saving and Restoring Variables

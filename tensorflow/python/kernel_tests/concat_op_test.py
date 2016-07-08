@@ -1,4 +1,4 @@
-# Copyright 2015 Google Inc. All Rights Reserved.
+# Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -411,6 +411,17 @@ class ConcatOpTest(tf.test.TestCase):
       after = len(g.get_operations())
       self.assertEqual(n + 3, after - before)
       print("graph = ", [x.name for x in g.get_operations()])
+
+  def testConcatLargeTensors(self):
+    # CPU-only test, because it fails on GPUs with <= 4GB memory.
+    with tf.device("/cpu:0"):
+      a = tf.ones([2**31 + 6], dtype=tf.int8)
+      b = tf.zeros([1024], dtype=tf.int8)
+      onezeros = tf.concat(0, [a, b])
+    with self.test_session(use_gpu=False):
+      # TODO(dga):  Add more depth to this test to validate correctness,
+      # not just non-crashingness, once other large tensor fixes have gone in.
+      _ = onezeros.eval()
 
 
 class ConcatOffsetTest(tf.test.TestCase):

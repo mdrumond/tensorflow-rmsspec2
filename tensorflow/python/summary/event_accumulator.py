@@ -1,4 +1,4 @@
-# Copyright 2015 Google Inc. All Rights Reserved.
+# Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -42,21 +42,23 @@ CompressedHistogramValue = namedtuple('CompressedHistogramValue',
 HistogramEvent = namedtuple('HistogramEvent',
                             ['wall_time', 'step', 'histogram_value'])
 
-HistogramValue = namedtuple('HistogramValue',
-                            ['min', 'max', 'num', 'sum', 'sum_squares',
-                             'bucket_limit', 'bucket'])
+HistogramValue = namedtuple('HistogramValue', ['min', 'max', 'num', 'sum',
+                                               'sum_squares', 'bucket_limit',
+                                               'bucket'])
 
-ImageEvent = namedtuple('ImageEvent',
-                        ['wall_time', 'step', 'encoded_image_string', 'width',
-                         'height'])
+ImageEvent = namedtuple('ImageEvent', ['wall_time', 'step',
+                                       'encoded_image_string', 'width',
+                                       'height'])
 
 AudioEvent = namedtuple('AudioEvent', ['wall_time', 'step',
                                        'encoded_audio_string', 'content_type',
                                        'sample_rate', 'length_frames'])
 
 ## Different types of summary events handled by the event_accumulator
-SUMMARY_TYPES = ('_scalars', '_histograms', '_compressed_histograms', '_images',
-                 '_audio')
+SUMMARY_TYPES = {'simple_value': '_ProcessScalar',
+                 'histo': '_ProcessHistogram',
+                 'image': '_ProcessImage',
+                 'audio': '_ProcessAudio'}
 
 ## The tagTypes below are just arbitrary strings chosen to pass the type
 ## information of the tag from the backend to the frontend
@@ -112,8 +114,7 @@ class EventAccumulator(object):
   `Accumulator.Scalars(tag)`) allow for the retrieval of all data
   associated with that tag.
 
-  Before usage, the `EventAccumulator` must be activated via `Reload()`. This
-  method synchronosly loads all of the data written so far.
+  The `Reload()` method synchronously loads all of the data written so far.
 
   Histograms, audio, and images are very large, so storing all of them is not
   recommended.
@@ -158,6 +159,7 @@ class EventAccumulator(object):
       else:
         sizes[key] = DEFAULT_SIZE_GUIDANCE[key]
 
+    self._first_event_timestamp = None
     self._scalars = reservoir.Reservoir(size=sizes[SCALARS])
     self._graph = None
     self._tagged_metadata = {}
@@ -173,75 +175,96 @@ class EventAccumulator(object):
     self._compression_bps = compression_bps
     self.purge_orphaned_data = purge_orphaned_data
 
-    self._activated = False
     self.most_recent_step = -1
     self.most_recent_wall_time = -1
     self.file_version = None
+
+    # The attributes that get built up by the accumulator
+    self.accumulated_attrs = ('_scalars', '_histograms',
+                              '_compressed_histograms', '_images', '_audio')
 
   def Reload(self):
     """Loads all events added since the last call to `Reload`.
 
     If `Reload` was never called, loads all events in the file.
-    Calling `Reload` activates the `EventAccumulator`.
 
     Returns:
       The `EventAccumulator`.
     """
-    self._activated = True
     with self._generator_mutex:
       for event in self._generator.Load():
-        if event.HasField('file_version'):
-          new_file_version = _ParseFileVersion(event.file_version)
-          if self.file_version and self.file_version != new_file_version:
-            ## This should not happen.
-            logging.warn(('Found new file_version for event.proto. This will '
-                          'affect purging logic for TensorFlow restarts. '
-                          'Old: {0} New: {1}').format(self.file_version,
-                                                      new_file_version))
-          self.file_version = new_file_version
-
-        self._MaybePurgeOrphanedData(event)
-
-        ## Process the event
-        if event.HasField('graph_def'):
-          if self._graph is not None:
-            logging.warn(('Found more than one graph event per run. '
-                          'Overwriting the graph with the newest event.'))
-          self._graph = event.graph_def
-        elif event.HasField('tagged_run_metadata'):
-          tag = event.tagged_run_metadata.tag
-          if tag in self._tagged_metadata:
-            logging.warn('Found more than one "run metadata" event with tag ' +
-                         tag + '. Overwriting it with the newest event.')
-          self._tagged_metadata[tag] = event.tagged_run_metadata.run_metadata
-        elif event.HasField('summary'):
-          for value in event.summary.value:
-            if value.HasField('simple_value'):
-              self._ProcessScalar(value.tag, event.wall_time, event.step,
-                                  value.simple_value)
-            elif value.HasField('histo'):
-              self._ProcessHistogram(value.tag, event.wall_time, event.step,
-                                     value.histo)
-              self._ProcessCompressedHistogram(value.tag, event.wall_time,
-                                               event.step, value.histo)
-            elif value.HasField('image'):
-              self._ProcessImage(value.tag, event.wall_time, event.step,
-                                 value.image)
-            elif value.HasField('audio'):
-              self._ProcessAudio(value.tag, event.wall_time, event.step,
-                                 value.audio)
+        self._ProcessEvent(event)
     return self
+
+  def FirstEventTimestamp(self):
+    """Returns the timestamp in seconds of the first event.
+
+    If the first event has been loaded (either by this method or by `Reload`,
+    this returns immediately. Otherwise, it will load in the first event. Note
+    that this means that calling `Reload` will cause this to block until
+    `Reload` has finished.
+
+    Returns:
+      The timestamp in seconds of the first event that was loaded.
+
+    Raises:
+      ValueError: If no events have been loaded and there were no events found
+      on disk.
+    """
+    if self._first_event_timestamp is not None:
+      return self._first_event_timestamp
+    with self._generator_mutex:
+      try:
+        event = next(self._generator.Load())
+        self._ProcessEvent(event)
+        return self._first_event_timestamp
+
+      except StopIteration:
+        raise ValueError('No event timestamp could be found')
+
+  def _ProcessEvent(self, event):
+    """Called whenever an event is loaded."""
+    if self._first_event_timestamp is None:
+      self._first_event_timestamp = event.wall_time
+
+    if event.HasField('file_version'):
+      new_file_version = _ParseFileVersion(event.file_version)
+      if self.file_version and self.file_version != new_file_version:
+        ## This should not happen.
+        logging.warn(('Found new file_version for event.proto. This will '
+                      'affect purging logic for TensorFlow restarts. '
+                      'Old: {0} New: {1}').format(self.file_version,
+                                                  new_file_version))
+      self.file_version = new_file_version
+
+    self._MaybePurgeOrphanedData(event)
+
+    ## Process the event
+    if event.HasField('graph_def'):
+      if self._graph is not None:
+        logging.warn(('Found more than one graph event per run. '
+                      'Overwriting the graph with the newest event.'))
+      self._graph = event.graph_def
+    elif event.HasField('tagged_run_metadata'):
+      tag = event.tagged_run_metadata.tag
+      if tag in self._tagged_metadata:
+        logging.warn('Found more than one "run metadata" event with tag ' +
+                     tag + '. Overwriting it with the newest event.')
+      self._tagged_metadata[tag] = event.tagged_run_metadata.run_metadata
+    elif event.HasField('summary'):
+      for value in event.summary.value:
+        for summary_type, summary_func in SUMMARY_TYPES.items():
+          if value.HasField(summary_type):
+            datum = getattr(value, summary_type)
+            getattr(self, summary_func)(value.tag, event.wall_time,
+                                        event.step, datum)
 
   def Tags(self):
     """Return all tags found in the value stream.
 
-    Raises:
-      RuntimeError: If the `EventAccumulator` has not been activated.
-
     Returns:
       A `{tagType: ['list', 'of', 'tags']}` dictionary.
     """
-    self._VerifyActivated()
     return {IMAGES: self._images.Keys(),
             AUDIO: self._audio.Keys(),
             HISTOGRAMS: self._histograms.Keys(),
@@ -258,12 +281,10 @@ class EventAccumulator(object):
 
     Raises:
       KeyError: If the tag is not found.
-      RuntimeError: If the `EventAccumulator` has not been activated.
 
     Returns:
       An array of `ScalarEvent`s.
     """
-    self._VerifyActivated()
     return self._scalars.Items(tag)
 
   def Graph(self):
@@ -271,12 +292,10 @@ class EventAccumulator(object):
 
     Raises:
       ValueError: If there is no graph for this run.
-      RuntimeError: If the `EventAccumulator` has not been activated.
 
     Returns:
       The `graph_def` proto.
     """
-    self._VerifyActivated()
     if self._graph is None:
       raise ValueError('There is no graph in this EventAccumulator')
     graph = graph_pb2.GraphDef()
@@ -291,12 +310,10 @@ class EventAccumulator(object):
 
     Raises:
       ValueError: If the tag is not found.
-      RuntimeError: If the `EventAccumulator` has not been activated.
 
     Returns:
       The metadata in form of `RunMetadata` proto.
     """
-    self._VerifyActivated()
     if tag not in self._tagged_metadata:
       raise ValueError('There is no run metadata with this tag name')
 
@@ -312,12 +329,10 @@ class EventAccumulator(object):
 
     Raises:
       KeyError: If the tag is not found.
-      RuntimeError: If the `EventAccumulator` has not been activated.
 
     Returns:
       An array of `HistogramEvent`s.
     """
-    self._VerifyActivated()
     return self._histograms.Items(tag)
 
   def CompressedHistograms(self, tag):
@@ -328,12 +343,10 @@ class EventAccumulator(object):
 
     Raises:
       KeyError: If the tag is not found.
-      RuntimeError: If the `EventAccumulator` has not been activated.
 
     Returns:
       An array of `CompressedHistogramEvent`s.
     """
-    self._VerifyActivated()
     return self._compressed_histograms.Items(tag)
 
   def Images(self, tag):
@@ -344,12 +357,10 @@ class EventAccumulator(object):
 
     Raises:
       KeyError: If the tag is not found.
-      RuntimeError: If the `EventAccumulator` has not been activated.
 
     Returns:
       An array of `ImageEvent`s.
     """
-    self._VerifyActivated()
     return self._images.Items(tag)
 
   def Audio(self, tag):
@@ -360,12 +371,10 @@ class EventAccumulator(object):
 
     Raises:
       KeyError: If the tag is not found.
-      RuntimeError: If the `EventAccumulator` has not been activated.
 
     Returns:
       An array of `AudioEvent`s.
     """
-    self._VerifyActivated()
     return self._audio.Items(tag)
 
   def _MaybePurgeOrphanedData(self, event):
@@ -517,6 +526,10 @@ class EventAccumulator(object):
 
   def _ProcessHistogram(self, tag, wall_time, step, histo):
     """Processes a histogram by adding it to accumulated state."""
+
+    # Also process the compressed histogram
+    self._ProcessCompressedHistogram(tag, wall_time, step, histo)
+
     histogram_value = HistogramValue(min=histo.min,
                                      max=histo.max,
                                      num=histo.num,
@@ -583,24 +596,20 @@ class EventAccumulator(object):
 
       def _ExpiredPerTag(value):
         return [getattr(self, x).FilterItems(_NotExpired, value.tag)
-                for x in SUMMARY_TYPES]
+                for x in self.accumulated_attrs]
 
       expired_per_tags = [_ExpiredPerTag(value)
                           for value in event.summary.value]
       expired_per_type = [sum(x) for x in zip(*expired_per_tags)]
     else:
       expired_per_type = [getattr(self, x).FilterItems(_NotExpired)
-                          for x in SUMMARY_TYPES]
+                          for x in self.accumulated_attrs]
 
     if sum(expired_per_type) > 0:
       purge_msg = _GetPurgeMessage(self.most_recent_step,
                                    self.most_recent_wall_time, event.step,
                                    event.wall_time, *expired_per_type)
       logging.warn(purge_msg)
-
-  def _VerifyActivated(self):
-    if not self._activated:
-      raise RuntimeError('Accumulator must be activated before it may be used.')
 
 
 def _GetPurgeMessage(most_recent_step, most_recent_wall_time, event_step,

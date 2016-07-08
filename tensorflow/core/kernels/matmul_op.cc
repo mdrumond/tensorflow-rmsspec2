@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -21,9 +21,11 @@ limitations under the License.
 
 #include "tensorflow/core/framework/op.h"
 #include "tensorflow/core/framework/op_kernel.h"
+#include "tensorflow/core/framework/register_types.h"
 #include "tensorflow/core/kernels/fill_functor.h"
 
 #if GOOGLE_CUDA
+#include "third_party/gpus/cuda/include/cuda.h"
 #include "tensorflow/core/platform/stream_executor.h"
 #endif  // GOOGLE_CUDA
 
@@ -109,18 +111,6 @@ struct LaunchMatMul<GPUDevice, T, true /* USE_CUBLAS */> {
   }
 };
 
-template <typename T>
-struct LaunchMatMul<GPUDevice, T, false /* USE_CUBLAS */> {
-  static void launch(
-      OpKernelContext* ctx, OpKernel* kernel, const Tensor& a, const Tensor& b,
-      const Eigen::array<Eigen::IndexPair<Eigen::DenseIndex>, 1>& dim_pair,
-      Tensor* out) {
-    functor::MatMulFunctor<GPUDevice, T>()(ctx->eigen_device<GPUDevice>(),
-                                           out->matrix<T>(), a.matrix<T>(),
-                                           b.matrix<T>(), dim_pair);
-  }
-};
-
 #endif  // GOOGLE_CUDA
 
 template <typename Device, typename T, bool USE_CUBLAS>
@@ -203,26 +193,30 @@ struct MatMulFunctor<CPUDevice, T> {
       Name("MatMul").Device(DEVICE_CPU).TypeConstraint<T>("T").Label("eigen"), \
       MatMulOp<CPUDevice, T, false /* cublas, ignored for CPU */>)
 
-#define REGISTER_GPU(T)                                                        \
-  REGISTER_KERNEL_BUILDER(                                                     \
-      Name("MatMul").Device(DEVICE_GPU).TypeConstraint<T>("T"),                \
-      MatMulOp<GPUDevice, T, true /* cublas, true by default */>);             \
-  REGISTER_KERNEL_BUILDER(Name("MatMul")                                       \
-                              .Device(DEVICE_GPU)                              \
-                              .TypeConstraint<T>("T")                          \
-                              .Label("cublas"),                                \
-                          MatMulOp<GPUDevice, T, true /* cublas */>);          \
-  REGISTER_KERNEL_BUILDER(                                                     \
-      Name("MatMul").Device(DEVICE_GPU).TypeConstraint<T>("T").Label("eigen"), \
-      MatMulOp<GPUDevice, T, false /* cublas */>)
+#define REGISTER_GPU(T)                                            \
+  REGISTER_KERNEL_BUILDER(                                         \
+      Name("MatMul").Device(DEVICE_GPU).TypeConstraint<T>("T"),    \
+      MatMulOp<GPUDevice, T, true /* cublas, true by default */>); \
+  REGISTER_KERNEL_BUILDER(Name("MatMul")                           \
+                              .Device(DEVICE_GPU)                  \
+                              .TypeConstraint<T>("T")              \
+                              .Label("cublas"),                    \
+                          MatMulOp<GPUDevice, T, true /* cublas */>)
 
-REGISTER_CPU(float);
-REGISTER_CPU(double);
-REGISTER_CPU(int32);
-REGISTER_CPU(complex64);
+TF_CALL_float(REGISTER_CPU);
+TF_CALL_double(REGISTER_CPU);
+TF_CALL_half(REGISTER_CPU);
+
+TF_CALL_int32(REGISTER_CPU);
+TF_CALL_complex64(REGISTER_CPU);
+TF_CALL_complex128(REGISTER_CPU);
+
 #if GOOGLE_CUDA
-REGISTER_GPU(float);
-// REGISTER_GPU(double);
+TF_CALL_float(REGISTER_GPU);
+TF_CALL_double(REGISTER_GPU);
+#if CUDA_VERSION >= 7050
+TF_CALL_half(REGISTER_GPU);
+#endif
 #endif  // GOOGLE_CUDA
 
 }  // namespace tensorflow

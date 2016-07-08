@@ -1,4 +1,4 @@
-# Copyright 2015 Google Inc. All Rights Reserved.
+# Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -57,12 +57,12 @@ def add_check_numerics_ops():
   """
   check_op = []
   # This code relies on the ordering of ops in get_operations().
-  # The consumer of a tensor always comes before that tensor's producer in
+  # The producer of a tensor always comes before that tensor's consumer in
   # this list. This is true because get_operations() returns ops in the order
-  # added, and ops can only be added once its inputs are added.
+  # added, and an op can only be added after its inputs are added.
   for op in ops.get_default_graph().get_operations():
     for output in op.outputs:
-      if output.dtype in [dtypes.float32, dtypes.float64]:
+      if output.dtype in [dtypes.float16, dtypes.float32, dtypes.float64]:
         message = op.name + ":" + str(output.value_index)
         with ops.control_dependencies(check_op):
           check_op = [array_ops.check_numerics(output, message=message)]

@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -111,6 +111,8 @@ bool Snappy_Uncompress(const char* input, size_t length, char* output) {
   return false;
 #endif
 }
+
+string Demangle(const char* mangled) { return mangled; }
 
 }  // namespace port
 }  // namespace tensorflow
