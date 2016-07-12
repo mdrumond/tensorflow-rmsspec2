@@ -98,6 +98,7 @@ def train():
 
     summary_writer = tf.train.SummaryWriter(FLAGS.train_dir, sess.graph)
 
+    train_start_time = time.time()
     for step in xrange(FLAGS.max_steps):
       start_time = time.time()
       _, loss_value = sess.run([train_op, loss])
@@ -112,16 +113,24 @@ def train():
 
         format_str = ('%s: step %d, loss = %.2f (%.1f examples/sec; %.3f '
                       'sec/batch)')
-        print (format_str % (datetime.now(), step, loss_value,
-                             examples_per_sec, sec_per_batch))
+        log_str  = (format_str % (datetime.now(), step, loss_value,
+                                  examples_per_sec, sec_per_batch))
+        print(log_str)
+        with open(os.path.join(FLAGS.train_dir, 'train.log'),'a+') as f:
+          f.write("%s\n" % log_str)
 
       if step % 100 == 0:
         summary_str = sess.run(summary_op)
         summary_writer.add_summary(summary_str, step)
         checkpoint_path = os.path.join(FLAGS.train_dir, 'model.ckpt')
         save_path = saver.save(sess, checkpoint_path, global_step=step)
-        print("Model saved in file: %s" % save_path)
+    train_duration = time.time() - train_start_time
 
+    log_str = ("Finishing. Training %d batches of %d images took %fs\n" %
+               (FLAGS.max_steps, FLAGS.batch_size, float(train_duration)))
+    print(log_str)
+    with open(os.path.join(FLAGS.train_dir, 'train.log'),'a+') as f:
+      f.write("%s" % log_str)
 
 def main(argv=None):  # pylint: disable=unused-argument
   cifar10.maybe_download_and_extract()

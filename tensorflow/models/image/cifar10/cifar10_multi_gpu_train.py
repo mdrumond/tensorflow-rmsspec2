@@ -51,12 +51,12 @@ from tensorflow.models.image.cifar10 import cifar10
 
 FLAGS = tf.app.flags.FLAGS
 
-tf.app.flags.DEFINE_string('train_dir', os.getcwd() + '/cifar10_train',
+tf.app.flags.DEFINE_string('train-dir', os.getcwd() + '/cifar10_train',
                            """Directory where to write event logs """
                            """and checkpoint.""")
-tf.app.flags.DEFINE_integer('max_steps', 1000000,
+tf.app.flags.DEFINE_integer('max-steps', 1000000,
                             """Number of batches to run.""")
-tf.app.flags.DEFINE_integer('num_gpus', 2,
+tf.app.flags.DEFINE_integer('num-gpus', 2,
                             """How many GPUs to use.""")
 tf.app.flags.DEFINE_boolean('log_device_placement', False,
                             """Whether to log device placement.""")
@@ -167,7 +167,20 @@ def train():
                                     staircase=True)
 
     # Create an optimizer that performs gradient descent.
-    opt = tf.train.GradientDescentOptimizer(lr)
+    if FLAGS.training_method=='sgd':
+      opt = tf.train.GradientDescentOptimizer(learning_rate=lr,
+                                              use_locking=FLAGS.use_locking)
+    elif FLAGS.training_method=='rmsprop':
+      opt = tf.train.RMSPropOptimizer(learning_rate=lr, decay=FLAGS.rms_decay,
+                                      momentum=FLAGS.momentum,
+                                      epsilon=FLAGS.epsilon,
+                                      use_locking=FLAGS.use_locking)
+    elif FLAGS.training_method=='rmsspectral':
+      opt = tf.train.RMSSpectralOptimizer(learning_rate=lr,
+                                          decay=FLAGS.rms_decay,
+                                          momentum=FLAGS.momentum,
+                                          epsilon=FLAGS.epsilon,
+                                          use_locking=FLAGS.use_locking)
 
     # Calculate the gradients for each model tower.
     tower_grads = []
@@ -244,7 +257,8 @@ def train():
     tf.train.start_queue_runners(sess=sess)
 
     summary_writer = tf.train.SummaryWriter(FLAGS.train_dir, sess.graph)
-
+    train_start_time = time.time()
+    
     for step in xrange(FLAGS.max_steps):
       start_time = time.time()
       _, loss_value = sess.run([train_op, loss])
@@ -259,8 +273,11 @@ def train():
 
         format_str = ('%s: step %d, loss = %.2f (%.1f examples/sec; %.3f '
                       'sec/batch)')
-        print (format_str % (datetime.now(), step, loss_value,
-                             examples_per_sec, sec_per_batch))
+        log_str  = (format_str % (datetime.now(), step, loss_value,
+                                  examples_per_sec, sec_per_batch))
+        print(log_str)
+        with open(os.path.join(FLAGS.train_dir, 'train.log'),'a+') as f:
+          f.write("%s\n" % log_str)
 
       if step % 100 == 0:
         summary_str = sess.run(summary_op)
@@ -270,6 +287,14 @@ def train():
       if step % 1000 == 0 or (step + 1) == FLAGS.max_steps:
         checkpoint_path = os.path.join(FLAGS.train_dir, 'model.ckpt')
         saver.save(sess, checkpoint_path, global_step=step)
+
+    train_duration = time.time() - train_start_time
+
+    log_str = ("Finishing. Training %d batches of %d images took %fs\n" %
+               (FLAGS.max_steps, FLAGS.batch_size, float(train_duration)))
+    print(log_str)
+    with open(os.path.join(FLAGS.train_dir, 'train.log'),'a+') as f:
+      f.write("%s" % log_str)
 
 
 def main(argv=None):  # pylint: disable=unused-argument
@@ -282,3 +307,4 @@ def main(argv=None):  # pylint: disable=unused-argument
 
 if __name__ == '__main__':
   tf.app.run()
+  

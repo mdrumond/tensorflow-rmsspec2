@@ -49,7 +49,7 @@ from tensorflow.models.image.cifar10 import cifar10_input
 FLAGS = tf.app.flags.FLAGS
 
 # Basic model parameters.
-tf.app.flags.DEFINE_integer('batch-size', 100,
+tf.app.flags.DEFINE_integer('batch-size', 128,
                             """Number of images to process in a batch.""")
 tf.app.flags.DEFINE_string('data-dir', '/tmp/cifar10_data',
                            """Path to the CIFAR-10 data directory.""")
@@ -60,6 +60,9 @@ tf.app.flags.DEFINE_float('learning-rate', 0.01, 'Learning rate')
 tf.app.flags.DEFINE_float('learning-rate-decay', 0.1, 'Learning rate decay')
 tf.app.flags.DEFINE_string('training-method', 'sgd',
                            'Traiining method: sgd, rmsprop or rmsspectral')
+tf.app.flags.DEFINE_boolean('use-locking', False,
+                            """Wether to do syncrhonous or assynch optimization.""")
+
 
 # Global constants describing the CIFAR-10 data set.
 IMAGE_SIZE = cifar10_input.IMAGE_SIZE
@@ -338,15 +341,19 @@ def train(total_loss, global_step):
   # Compute gradients.
   with tf.control_dependencies([loss_averages_op]):
     if FLAGS.training_method=='sgd':
-      opt = tf.train.GradientDescentOptimizer(lr)
+      opt = tf.train.GradientDescentOptimizer(learning_rate=lr,
+                                              use_locking=FLAGS.use_locking)
     elif FLAGS.training_method=='rmsprop':
-      opt = tf.train.RMSPropOptimizer(lr,
-                                      FLAGS.rms_decay, FLAGS.momentum,
-                                      FLAGS.epsilon)
+      opt = tf.train.RMSPropOptimizer(learning_rate=lr, decay=FLAGS.rms_decay,
+                                      momentum=FLAGS.momentum,
+                                      epsilon=FLAGS.epsilon,
+                                      use_locking=FLAGS.use_locking)
     elif FLAGS.training_method=='rmsspectral':
-      opt = tf.train.RMSSpectralOptimizer(lr,
-                                          FLAGS.rms_decay, FLAGS.momentum,
-                                          FLAGS.epsilon)
+      opt = tf.train.RMSSpectralOptimizer(learning_rate=lr,
+                                          decay=FLAGS.rms_decay,
+                                          momentum=FLAGS.momentum,
+                                          epsilon=FLAGS.epsilon,
+                                          use_locking=FLAGS.use_locking)
       
     grads = opt.compute_gradients(total_loss)
 
