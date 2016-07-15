@@ -4,7 +4,9 @@ import numpy as np
 class StochasticRoundingFormat(object):
     def __init__(self, bits_int, bits_frac):
         self._bits_int = bits_int
+        self._bits_int_mask = 2**(self._bits_int)
         self._bits_frac = bits_frac
+        self._bits_frac_mask = 2**(self._bits_frac)
         self._total_bits_mask = 2**(self._bits_int +
                                     self._bits_frac)
         self._frac_mask = 2**(self._bits_frac)
@@ -26,16 +28,14 @@ class StochasticRoundingFormat(object):
         clamped_data = (data * non_clamped_data +
                         overflow_data * float(self._max_value) +
                         neg_overflow_data * self._min_value)
-
         scaled_repr = (clamped_data.astype(np.float) *
-                       float(self._total_bits_mask))
-
+                       float(self._bits_frac_mask))
         scaled_floor = np.floor(scaled_repr)
 
         data_round = (np.random.rand(*data.shape) <
                       (scaled_repr - scaled_floor)).astype(np.float)
 
-        return (scaled_floor + data_round)/self._total_bits_mask
+        return (scaled_floor + data_round).astype(np.int32)
 
 
 class StochasticRounding(object):
@@ -44,7 +44,7 @@ class StochasticRounding(object):
         if data is not None:
             self._data = number_format.round(data)
         else:
-            self._data = np.zeros(shape, dtype=np.float)
+            self._data = np.zeros(shape, dtype=np.int32)
 
     @classmethod
     def from_numpy(cls, number_format, data):
@@ -65,7 +65,7 @@ class StochasticRounding(object):
                                   shape=shape, data=data)
 
     def to_float(self):
-        return self._data.astype(np.float)
+        return self._data.astype(np.float)/self._format._bits_frac_mask
 
     def op(self, operation, other):
 
@@ -74,6 +74,7 @@ class StochasticRounding(object):
 
 
 def test_basic_rounding():
+    print(">>>> Test 1...")
     number_format = StochasticRoundingFormat(bits_int=2, bits_frac=5)
 
     a_np = np.array([-8, -2, -1, 0, 1, 2, 3, 8], dtype=float)
@@ -85,11 +86,12 @@ def test_basic_rounding():
                         dtype=np.float)
     np.testing.assert_allclose(expected,
                                a.to_float(),
-                               atol=number_format._min_frac/2,
+                               atol=number_format._min_frac,
                                rtol=0.0)
 
 
 def test_stochastic_rounding():
+    print(">>>> Test 2...")
     number_format = StochasticRoundingFormat(bits_int=5, bits_frac=5)
 
     a_np = np.array([-64, -2, -1, 0, 1, 2, 3, 64], dtype=np.float)
@@ -108,34 +110,37 @@ def test_stochastic_rounding():
 
     np.testing.assert_allclose(expected_result,
                                observed_result.to_float(),
-                               atol=number_format._min_frac/2,
+                               atol=number_format._min_frac,
                                rtol=0.0)
 
 
-def test_rounding_ops():
-
+def test_rounding_ops(iteration):
+    print(">>>> Test 3(%d)..." % iteration)
+    
     a_np = np.random.rand(10000)
     b_np = np.random.rand(10000)
-
     number_format = StochasticRoundingFormat(bits_int=2, bits_frac=5)
     a = StochasticRounding.from_numpy(number_format, a_np)
     b = StochasticRounding.from_numpy(number_format, b_np)
 
     observed_result = a.op(np.multiply, b)
 
-    max_error = 2 * number_format._min_frac + number_format._min_frac**2
+    max_error = 3 * number_format._min_frac + number_format._min_frac**2
     np.testing.assert_allclose(a_np,
                                a.to_float(), rtol=0.0,
-                               atol=number_format._min_frac/2)
+                               atol=number_format._min_frac,
+                               err_msg="test3: rounding a failed")
     np.testing.assert_allclose(b_np,
                                b.to_float(), rtol=0.0,
-                               atol=number_format._min_frac/2)
+                               atol=number_format._min_frac,
+                               err_msg="test3: rounding b failed")
     np.testing.assert_allclose(a_np*b_np,
                                observed_result.to_float(), rtol=0.0,
-                               atol=max_error/2)
+                               atol=max_error,
+                               err_msg="test3: multiply test failed")
 
 if __name__ == "__main__":
     test_basic_rounding()
     test_stochastic_rounding()
     for i in range(10000):
-        test_rounding_ops()
+        test_rounding_ops(i)
