@@ -21,6 +21,9 @@ limitations under the License.
 #include "third_party/eigen3/Eigen/SVD"
 #include "third_party/eigen3/Eigen/QR"
 #include "tensorflow/core/platform/types.h"
+#include "tensorflow/core/kernels/random_op.h"
+#include "tensorflow/core/util/guarded_philox_random.h"
+#include "tensorflow/core/lib/random/random_distributions.h"
 
 
 #define REGISTER_MATDECOMP_OP(OpName, OpClass, Scalar)       \
@@ -28,6 +31,8 @@ limitations under the License.
       Name(OpName).Device(DEVICE_CPU).TypeConstraint<Scalar>("T"), OpClass)
 
 namespace tensorflow{
+
+typedef Eigen::ThreadPoolDevice CPUDevice;
 
 
 template <typename T>
@@ -134,7 +139,9 @@ template <typename T>
 class MatrixDecompSvdRand : public MatrixDecompSvdBase<T> {
 public:
   explicit MatrixDecompSvdRand(OpKernelConstruction* context)
-    : MatrixDecompSvdBase<T>(context) {}
+    : MatrixDecompSvdBase<T>(context) {
+      OP_REQUIRES_OK(context, generator_.Init(context));
+  }
 
   int64 GetSmallDim(OpKernelContext* context,
                     const TensorShape& input_matrix_shape) override {
@@ -144,6 +151,8 @@ public:
   using typename MatrixDecompSvdBase<T>::Matrix;
   using typename MatrixDecompSvdBase<T>::ConstMatrixMap;
   using typename MatrixDecompSvdBase<T>::MatrixMap;
+  typedef random::UniformDistribution<random::PhiloxRandom, T>
+  UniformDistribution;
   
   void ComputeSVD(OpKernelContext* context,
                   const ConstMatrixMap& input,
@@ -156,7 +165,6 @@ public:
 
     int64 svdSmallDim = GetSmallDim(context,
                                     TensorShape( {input.rows(), input.cols()} ));
-    int64 inSmallDim = (input.rows() > input.cols())? input.cols() : input.rows();
     int64 inBigDim = (input.rows() > input.cols())? input.rows() : input.cols();
     bool transpose = (input.cols() > input.rows())? true : false;
 
@@ -168,7 +176,22 @@ public:
       inMat = input;
     }
 
-    Matrix randIn(Matrix::Random(inSmallDim, svdSmallDim));
+    TensorShape randIn_shape( { inMat.rows() , inMat.cols() } );
+    Tensor randInTensor(DT_FLOAT, randIn_shape);
+    auto randInFlat = randInTensor.flat<T>();
+
+    MatrixMap randIn(randInFlat.data(),
+                     randInTensor.dim_size(0),
+                     randInTensor.dim_size(1));
+    
+    functor::FillPhiloxRandom<CPUDevice, UniformDistribution>()
+                              (context, context->eigen_device<CPUDevice>(),
+                               // Multiplier 256 is the same as in FillPhiloxRandomTask; do not change
+                               // it just here.
+                               generator_.ReserveRandomOutputs(randInFlat.size(), 256),
+                               randInFlat.data(), randInFlat.size(),
+                               UniformDistribution());
+    
     Matrix id(Matrix::Identity(inBigDim, svdSmallDim));
     auto q = (inMat * randIn).householderQr().householderQ()*id;
     
@@ -191,11 +214,18 @@ public:
       *outV = v;
     }
   }
+
+ private:
+  GuardedPhiloxRandom generator_;
+  
 };
 
   
 REGISTER_MATDECOMP_OP("MatrixDecompSvdRand", (MatrixDecompSvdRand<float>),
                           float);
-REGISTER_MATDECOMP_OP("MatrixDecompSvdRand", (MatrixDecompSvdRand<double>),
-                          double);
+  //REGISTER_MATDECOMP_OP("MatrixDecompSvdRand", (MatrixDecompSvdRand<double>),
+  //                          double);
+
+#undef REGISTER_MATDECOMP_OP
+
 }  // namespace tensorflow
