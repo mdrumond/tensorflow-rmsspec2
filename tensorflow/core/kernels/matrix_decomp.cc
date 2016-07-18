@@ -13,8 +13,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-// SVD decompositions
 
+#define EIGEN_USE_THREADS
+
+// SVD decompositions
 #include "tensorflow/core/framework/op.h"
 #include "tensorflow/core/framework/op_kernel.h"
 #include "third_party/eigen3/Eigen/Core"
@@ -24,6 +26,7 @@ limitations under the License.
 #include "tensorflow/core/kernels/random_op.h"
 #include "tensorflow/core/util/guarded_philox_random.h"
 #include "tensorflow/core/lib/random/random_distributions.h"
+#include "tensorflow/core/util/work_sharder.h"
 
 
 #define REGISTER_MATDECOMP_OP(OpName, OpClass, Scalar)       \
@@ -31,9 +34,6 @@ limitations under the License.
       Name(OpName).Device(DEVICE_CPU).TypeConstraint<Scalar>("T"), OpClass)
 
 namespace tensorflow{
-
-typedef Eigen::ThreadPoolDevice CPUDevice;
-
 
 template <typename T>
 class MatrixDecompSvdBase : public OpKernel {
@@ -135,6 +135,64 @@ REGISTER_MATDECOMP_OP("MatrixDecompSvd", (MatrixDecompSvd<float>),
 REGISTER_MATDECOMP_OP("MatrixDecompSvd", (MatrixDecompSvd<double>),
                           double);
 
+
+typedef Eigen::ThreadPoolDevice CPUDevice;
+
+// Specialization for distribution that takes a fixed number of samples for
+// each output.
+template <class Distribution>
+struct GetRandomTensorTask {
+  typedef typename Distribution::ResultElementType TElemType;
+  static void Run(random::PhiloxRandom gen, TElemType* data, int64 size,
+                  int64 start_group, int64 limit_group, Distribution dist) {
+    const int kGroupSize = Distribution::kResultElementCount;
+
+    gen.Skip(start_group);
+    int64 offset = start_group * kGroupSize;
+
+    // First fill all the full-size groups
+    int64 limit_group_full = std::min(limit_group, size / kGroupSize);
+    for (int64 index = start_group; index < limit_group_full; ++index) {
+      auto samples = dist(&gen);
+      std::copy(&samples[0], &samples[0] + kGroupSize, data + offset);
+      offset += kGroupSize;
+    }
+
+    // If there are any remaining elements that need to be filled, process them
+    if (limit_group_full < limit_group) {
+      int64 remaining_size = size - limit_group_full * kGroupSize;
+      auto samples = dist(&gen);
+      std::copy(&samples[0], &samples[0] + remaining_size, data + offset);
+    }
+  }
+};
+
+template <typename Distribution>
+struct GetRandomTensor {
+  typedef typename Distribution::ResultElementType TElemType;
+  void operator()(OpKernelContext* context, const CPUDevice&,
+                  random::PhiloxRandom gen, TElemType* data, int64 size,
+                  Distribution dist) {
+    const int kGroupSize = Distribution::kResultElementCount;
+
+    auto worker_threads = *(context->device()->tensorflow_cpu_worker_threads());
+
+    int64 total_group_count = (size + kGroupSize - 1) / kGroupSize;
+
+    const int kGroupCost =
+        random::PhiloxRandom::kResultElementCount *
+        (random::PhiloxRandom::kElementCost + Distribution::kElementCost);
+    Shard(worker_threads.num_threads, worker_threads.workers, total_group_count,
+          kGroupCost,
+          [&gen, data, size, dist](int64 start_group, int64 limit_group) {
+            GetRandomTensorTask<Distribution>::Run(gen, data, size,
+                                     start_group,
+                                     limit_group,
+                                     dist);
+          });
+  }
+};
+  
 template <typename T>
 class MatrixDecompSvdRand : public MatrixDecompSvdBase<T> {
 public:
@@ -151,8 +209,7 @@ public:
   using typename MatrixDecompSvdBase<T>::Matrix;
   using typename MatrixDecompSvdBase<T>::ConstMatrixMap;
   using typename MatrixDecompSvdBase<T>::MatrixMap;
-  typedef random::UniformDistribution<random::PhiloxRandom, T>
-  UniformDistribution;
+  using PhiloxUniformDistribution = random::UniformDistribution<random::PhiloxRandom, T>;
   
   void ComputeSVD(OpKernelContext* context,
                   const ConstMatrixMap& input,
@@ -184,13 +241,13 @@ public:
                      randInTensor.dim_size(0),
                      randInTensor.dim_size(1));
     
-    functor::FillPhiloxRandom<CPUDevice, UniformDistribution>()
-                              (context, context->eigen_device<CPUDevice>(),
-                               // Multiplier 256 is the same as in FillPhiloxRandomTask; do not change
-                               // it just here.
-                               generator_.ReserveRandomOutputs(randInFlat.size(), 256),
-                               randInFlat.data(), randInFlat.size(),
-                               UniformDistribution());
+    GetRandomTensor<PhiloxUniformDistribution>()
+      (context, context->eigen_device<CPUDevice>(),
+       // Multiplier 256 is the same as in FillPhiloxRandomTask; do not change
+       // it just here.
+       generator_.ReserveRandomOutputs(randInFlat.size(), 256),
+       randInFlat.data(), randInFlat.size(),
+       PhiloxUniformDistribution());
     
     Matrix id(Matrix::Identity(inBigDim, svdSmallDim));
     auto q = (inMat * randIn).householderQr().householderQ()*id;

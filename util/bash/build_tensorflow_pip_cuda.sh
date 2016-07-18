@@ -1,13 +1,20 @@
 #! /bin/bash
 
-if [ "$1" -eq "r" ]; then
+if [ "$1" = "r" ]; then
     bazel clean 
-    pip uninstall tensorflow
+    pip3 uninstall tensorflow
     rm -rf _python_build
 fi
 
 
-PYTHON_BIN_PATH=/usr/bin/python3 TF_NEED_CUDA=1 ./configure
+PYTHON_BIN_PATH=/usr/bin/python3 \
+               TF_NEED_CUDA=1 \
+               TF_NEED_GCP=0 \
+               GCC_HOST_COMPILER_PATH=$(which gcc) \
+               CUDA_TOOLKIT_PATH=/usr/local/cuda \
+               CUDNN_INSTALL_PATH=/usr/local/cuda \
+               CUDNN_INSTALL_PATH=`${PYTHON_BIN_PATH} -c "import os; print(os.path.realpath(os.path.expanduser('${CUDNN_INSTALL_PATH}')))"` \
+               ./configure
 bazel build -c opt --config=cuda //tensorflow/tools/pip_package:build_pip_package --spawn_strategy=standalone --genrule_strategy=standalone --jobs 4 
 
 if [ $? -eq 0 ]; then

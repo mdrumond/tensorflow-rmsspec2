@@ -903,6 +903,7 @@ tf_kernel_libraries(
     deps = [
         ":binary_linalg_ops_common",
         ":linalg_ops_common",
+        ":random_ops",
         "//tensorflow/core:framework",
         "//tensorflow/core:lib",
         "//tensorflow/core:linalg_ops_op_lib",
