@@ -35,7 +35,7 @@ limitations under the License.
 #include "tensorflow/core/platform/types.h"
 
 namespace tensorflow {
-class SessionOptions;
+struct SessionOptions;
 class StepStats;
 class Timeline;
 
@@ -47,8 +47,12 @@ struct SimpleGraphExecutionStateOptions {
 // A SimpleClientGraph is simply a sub-graph of the full graph as induced by
 // BuildGraphOptions.
 struct SimpleClientGraph {
+  explicit SimpleClientGraph(std::unique_ptr<FunctionLibraryDefinition> flib)
+      : flib_def(std::move(flib)), graph(flib_def.get()) {}
+  // Each client-graph gets its own function library since optimization passes
+  // post rewrite for execution might want to introduce new functions.
+  std::unique_ptr<FunctionLibraryDefinition> flib_def;
   Graph graph;
-  explicit SimpleClientGraph(const OpRegistryInterface* ops) : graph(ops) {}
   int32 placement_version;
 };
 
@@ -78,7 +82,7 @@ struct SimpleClientGraph {
 
 class SimpleGraphExecutionState {
  public:
-  SimpleGraphExecutionState(const OpRegistryInterface* ops,
+  SimpleGraphExecutionState(const FunctionDefLibrary& func_def_lib,
                             const SimpleGraphExecutionStateOptions& options);
 
   virtual ~SimpleGraphExecutionState();
@@ -100,19 +104,36 @@ class SimpleGraphExecutionState {
   // in *this, but currently does not transfer any other placement
   // or cost model information to the new graph.
   Status Extend(const GraphDef& extension_def,
-                SimpleGraphExecutionState** out) const;
+                std::unique_ptr<SimpleGraphExecutionState>* out) const;
 
   // Builds a SimpleClientGraph (a sub-graph of the full graph as induced by
   // the Node set specified in "options").  If successful, returns OK
   // and the caller takes the ownership of "*out". Otherwise, returns
   // an error.
-  Status BuildGraph(const BuildGraphOptions& options, SimpleClientGraph** out);
+  Status BuildGraph(const BuildGraphOptions& options,
+                    std::unique_ptr<SimpleClientGraph>* out);
 
   // Returns OK if the named node is found in the placed full graph owned
   // by this execution_state, and sets *out to the NodeDef for that node.
   // It may not exist if name is of a Node added for a particular subgraph
   // execution, e.g. a send, recv or feed node.
   Status GlobalNodeDefByName(const string& name, NodeDef* out);
+
+  // Sums execution statistics in "ss" into the CostModel.
+  void UpdateCostsFromStats(const StepStats& ss);
+
+  Microseconds TimeEstimate(const Node* n) {
+    mutex_lock l(mu_);  // could use reader lock
+    return costs_.TimeEstimate(n);
+  }
+
+  Bytes SizeEstimate(const Node* n, int output_slot) {
+    mutex_lock l(mu_);  // could use reader lock
+    return costs_.SizeEstimate(n, output_slot);
+  }
+
+  // Merge the cost model maintained by this graph_execution_state to 'costs'.
+  void MergeCostsFromGlobal(CostModel* costs);
 
   // The graph returned by BuildGraph may contain only the pruned
   // graph, whereas some clients may want access to the full graph.
@@ -153,10 +174,18 @@ class SimpleGraphExecutionState {
   void SaveStatefulNodes(Graph* graph) EXCLUSIVE_LOCKS_REQUIRED(mu_);
   void RestoreStatefulNodes(Graph* graph) EXCLUSIVE_LOCKS_REQUIRED(mu_);
 
-  const OpRegistryInterface* const ops_;   // Not owned
   GraphDef original_graph_def_;            // Immutable after ctor.
   const DeviceSet* device_set_;            // Not owned
   const SessionOptions* session_options_;  // Not owned
+
+  CostModel costs_ GUARDED_BY(mu_);
+
+  // Map from name to Node for the full graph in placed_.
+  NodeNameToCostIdMap node_name_to_cost_id_map_;
+
+  // 'flib_def_' is initialized from the initial graph def's library,
+  // and may be updated by a graph optimization pass.
+  std::unique_ptr<FunctionLibraryDefinition> flib_def_;
 
   // The dataflow graph owned by this object.
   Graph* graph_ GUARDED_BY(mu_);

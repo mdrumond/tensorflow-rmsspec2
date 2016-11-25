@@ -18,11 +18,12 @@ cc_library(
         "hinge-loss.h",
         "logistic-loss.h",
         "loss.h",
+        "smooth-hinge-loss.h",
         "squared-loss.h",
     ],
     deps = [
-        "@protobuf//:protobuf",
         "//tensorflow/core:framework_headers_lib",
+        "@protobuf//:protobuf",
     ],
 )
 
@@ -39,39 +40,15 @@ cc_test(
 )
 
 cc_library(
-    name = "resources",
-    srcs = ["resources.cc"],
-    hdrs = ["resources.h"],
-    deps = [
-        "@protobuf//:protobuf",
-        "//tensorflow/core:framework_headers_lib",
-        "//third_party/eigen3",
-    ],
-)
-
-cc_test(
-    name = "resources_test",
-    size = "small",
-    srcs = ["resources_test.cc"],
-    deps = [
-        ":resources",
-        "//tensorflow/core:framework",
-        "//tensorflow/core:lib",
-        "//tensorflow/core:test",
-        "//tensorflow/core:test_main",
-    ],
-)
-
-cc_library(
     name = "sdca_ops",
     srcs = ["sdca_ops.cc"],
     deps = [
-        "@protobuf//:protobuf",
         ":loss_updaters",
-        ":resources",
         "//tensorflow/core:framework_headers_lib",
         "//tensorflow/core/kernels:bounds_check_lib",
         "//third_party/eigen3",
+        "@farmhash_archive//:farmhash",
+        "@protobuf//:protobuf",
     ],
     alwayslink = 1,
 )
@@ -79,9 +56,11 @@ cc_library(
 tf_cc_test(
     name = "sdca_ops_test",
     size = "small",
+    srcs = ["sdca_ops_test.cc"],
     linkstatic = tf_kernel_tests_linkstatic(),  # Required for benchmarking
     deps = [
         "//tensorflow/contrib/linear_optimizer:sdca_op_kernels",
+        "//tensorflow/contrib/linear_optimizer:sdca_ops_op_lib",
         "//tensorflow/core:all_kernels",
         "//tensorflow/core:core_cpu",
         "//tensorflow/core:framework",

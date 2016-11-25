@@ -16,6 +16,9 @@ cmake_policy(SET CMP0022 NEW)
 # Options
 option(tensorflow_VERBOSE "Enable for verbose output" OFF)
 option(tensorflow_BUILD_TESTS "Build tests" ON)
+option(tensorflow_ENABLE_SSL_SUPPORT "Enable boringssl support" OFF)
+option(tensorflow_BUILD_CC_EXAMPLE "Build the C++ tutorial example" ON)
+option(tensorflow_BUILD_PYTHON_BINDINGS "Build the Python bindings" ON)
 
 #Threads: defines CMAKE_THREAD_LIBS_INIT and adds -pthread compile option for
 # targets that link ${CMAKE_THREAD_LIBS_INIT}.
@@ -38,22 +41,41 @@ set (DOWNLOAD_LOCATION "${CMAKE_CURRENT_BINARY_DIR}/downloads"
      CACHE PATH "Location where external projects will be downloaded.")
 mark_as_advanced(DOWNLOAD_LOCATION)
 
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
 # External dependencies
+include(gif)
 include(png)
 include(jpeg)
 include(re2)
 include(eigen)
+include(jsoncpp)
+if(tensorflow_ENABLE_SSL_SUPPORT)
+  include(boringssl)
+endif()
+include(farmhash)
+include(highwayhash)
+include(protobuf)
+include(grpc)
 
 # Let's get to work!
 include(tf_core_framework.cmake)
-include(tf_stream_executor.cmake)
+# NOTE: Disabled until issue #3996 is fixed.
+# include(tf_stream_executor.cmake)
 include(tf_core_cpu.cmake)
 include(tf_models.cmake)
 include(tf_core_ops.cmake)
 include(tf_core_direct_session.cmake)
+include(tf_core_distributed_runtime.cmake)
 include(tf_core_kernels.cmake)
 include(tf_cc_ops.cmake)
-include(tf_tutorials.cmake)
+include(tf_tools.cmake)
+if(tensorflow_BUILD_CC_EXAMPLE)
+  include(tf_tutorials.cmake)
+endif()
+if(tensorflow_BUILD_PYTHON_BINDINGS)
+  include(tf_python.cmake)
+endif()
 
 if (tensorflow_BUILD_TESTS)
   include(tests.cmake)

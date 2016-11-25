@@ -27,7 +27,7 @@ until the element has been enqueued.
 At runtime, this operation may raise an error if the queue is
 [closed](#QueueBase.close) before or during its execution. If the
 queue is closed before this operation runs,
-`tf.errors.AbortedError` will be raised. If this operation is
+`tf.errors.CancelledError` will be raised. If this operation is
 blocked, and either (i) the queue is closed by a close operation
 with `cancel_pending_enqueues=True`, or (ii) the session is
 [closed](../../api_docs/python/client.md#Session.close),
@@ -61,7 +61,7 @@ until all of the elements have been enqueued.
 At runtime, this operation may raise an error if the queue is
 [closed](#QueueBase.close) before or during its execution. If the
 queue is closed before this operation runs,
-`tf.errors.AbortedError` will be raised. If this operation is
+`tf.errors.CancelledError` will be raised. If this operation is
 blocked, and either (i) the queue is closed by a close operation
 with `cancel_pending_enqueues=True`, or (ii) the session is
 [closed](../../api_docs/python/client.md#Session.close),
@@ -234,7 +234,7 @@ will have size `n` in the 0th dimension.
 If the queue is closed and there are more than `0` but fewer than
 `n` elements remaining, then instead of raising a
 `tf.errors.OutOfRangeError` like [`dequeue_many`](#QueueBase.dequeue_many),
-the remaining elements are returned immediately.  If the queue is
+less than `n` elements are returned immediately.  If the queue is
 closed and there are `0` elements left in the queue, then a
 `tf.errors.OutOfRangeError` is raised just like in `dequeue_many`.
 Otherwise the behavior is identical to `dequeue_many`.
@@ -300,5 +300,12 @@ The list of names for each component of a queue element.
 #### `tf.QueueBase.queue_ref` {#QueueBase.queue_ref}
 
 The underlying queue reference.
+
+
+- - -
+
+#### `tf.QueueBase.shapes` {#QueueBase.shapes}
+
+The list of shapes for each component of a queue element.
 
 

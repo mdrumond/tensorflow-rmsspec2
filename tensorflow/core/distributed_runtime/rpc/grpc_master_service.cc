@@ -101,7 +101,7 @@ class GrpcMasterService : public AsyncServiceInterface {
     }                                                                         \
   } while (0)
 
-  void HandleRPCsLoop() {
+  void HandleRPCsLoop() override {
     ENQUEUE_REQUEST(CreateSession, true);
     ENQUEUE_REQUEST(ExtendSession, false);
     for (int i = 0; i < 100; ++i) {
@@ -118,7 +118,6 @@ class GrpcMasterService : public AsyncServiceInterface {
           static_cast<UntypedCall<GrpcMasterService>::Tag*>(tag);
       if (callback_tag) {
         callback_tag->OnCompleted(this, ok);
-        delete callback_tag;
       } else {
         // NOTE(mrry): A null `callback_tag` indicates that this is
         // the shutdown alarm.

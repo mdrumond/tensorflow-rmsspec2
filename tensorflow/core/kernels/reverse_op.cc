@@ -97,13 +97,7 @@ class ReverseOp : public OpKernel {
                               .HostMemory("dims"),    \
                           ReverseOp<CPUDevice, T>)
 
-TF_CALL_uint8(REGISTER_KERNEL);
-TF_CALL_int8(REGISTER_KERNEL);
-TF_CALL_int32(REGISTER_KERNEL);
-TF_CALL_bool(REGISTER_KERNEL);
-TF_CALL_half(REGISTER_KERNEL);
-TF_CALL_float(REGISTER_KERNEL);
-TF_CALL_double(REGISTER_KERNEL);
+TF_CALL_POD_TYPES(REGISTER_KERNEL);
 #undef REGISTER_KERNEL
 
 #if GOOGLE_CUDA
@@ -131,11 +125,12 @@ namespace functor {
 
 TF_CALL_uint8(DECLARE_GPU_SPEC);
 TF_CALL_int8(DECLARE_GPU_SPEC);
-TF_CALL_int32(DECLARE_GPU_SPEC);
 TF_CALL_bool(DECLARE_GPU_SPEC);
 TF_CALL_half(DECLARE_GPU_SPEC);
 TF_CALL_float(DECLARE_GPU_SPEC);
 TF_CALL_double(DECLARE_GPU_SPEC);
+TF_CALL_complex64(DECLARE_GPU_SPEC);
+TF_CALL_complex128(DECLARE_GPU_SPEC);
 #undef DECLARE_GPU_SPEC
 #undef DECLARE_GPU_SPEC_DIM
 }  // namespace functor
@@ -149,10 +144,25 @@ TF_CALL_double(DECLARE_GPU_SPEC);
                           ReverseOp<GPUDevice, T>)
 TF_CALL_uint8(REGISTER_GPU_KERNEL);
 TF_CALL_int8(REGISTER_GPU_KERNEL);
+// TODO decide whether we want to enable the bool kernel.
+// TF_CALL_bool(REGISTER_GPU_KERNEL);
 TF_CALL_half(REGISTER_GPU_KERNEL);
 TF_CALL_float(REGISTER_GPU_KERNEL);
 TF_CALL_double(REGISTER_GPU_KERNEL);
+TF_CALL_complex64(REGISTER_GPU_KERNEL);
+TF_CALL_complex128(REGISTER_GPU_KERNEL);
 #undef REGISTER_GPU_KERNEL
+
+// A special GPU kernel for int32.
+// TODO(b/25387198): Also enable int32 in device memory. This kernel
+// registration requires all int32 inputs and outputs to be in host memory.
+REGISTER_KERNEL_BUILDER(Name("Reverse")
+                            .Device(DEVICE_GPU)
+                            .TypeConstraint<int32>("T")
+                            .HostMemory("tensor")
+                            .HostMemory("dims")
+                            .HostMemory("output"),
+                        ReverseOp<CPUDevice, int32>);
 
 #endif  // GOOGLE_CUDA
 

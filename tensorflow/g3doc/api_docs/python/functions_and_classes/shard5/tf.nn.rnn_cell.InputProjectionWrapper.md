@@ -5,6 +5,13 @@ but instead concatenate the whole sequence of your inputs in time,
 do the projection on this batch-concatenated sequence, then split it.
 - - -
 
+#### `tf.nn.rnn_cell.InputProjectionWrapper.__call__(inputs, state, scope=None)` {#InputProjectionWrapper.__call__}
+
+Run the input projection and then the cell.
+
+
+- - -
+
 #### `tf.nn.rnn_cell.InputProjectionWrapper.__init__(cell, num_proj, input_size=None)` {#InputProjectionWrapper.__init__}
 
 Create a cell with input projection.
@@ -50,8 +57,8 @@ Return zero-filled state tensor(s).
 
 ##### Returns:
 
-  If `state_size` is an int, then the return value is a `2-D` tensor of
-  shape `[batch_size x state_size]` filled with zeros.
+  If `state_size` is an int or TensorShape, then the return value is a
+  `N-D` tensor of shape `[batch_size x state_size]` filled with zeros.
 
   If `state_size` is a nested list or tuple, then the return value is
   a nested list or tuple (of the same structure) of `2-D` tensors with

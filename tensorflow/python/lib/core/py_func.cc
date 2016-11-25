@@ -37,15 +37,6 @@ PyObject* GetPyTrampoline() {
   return py_trampoline;
 }
 
-// Returns a single-thread threadpool used to execute python
-// trampoline and the python function. It is single threaded because
-// GIL is needed running the trampoline.
-thread::ThreadPool* py_thread() {
-  static thread::ThreadPool* w =
-      new thread::ThreadPool(Env::Default(), "PyTrampoline", 1);
-  return w;
-}
-
 // Returns the corresponding numpy dtype in 'np' for tf data type
 // 'tf'.  Returns an error if the type is not supported by this
 // module.
@@ -96,7 +87,7 @@ struct PyCall {
   // with this "token".
   string token;
 
-  // Inputs and outputs of this function invokation.
+  // Inputs and outputs of this function invocation.
   std::vector<Tensor> ins;
   std::vector<Tensor> out;
 };
@@ -163,58 +154,6 @@ Status NumericNpDTypeToTfDType(const int np, DataType* tf) {
   return Status::OK();
 }
 
-// Given an numpy ndarray object 'obj', creates a corresponding tf
-// Tensor in '*ret'.
-Status ConvertNdarrayToTensor(PyObject* obj, Tensor* ret) {
-  PyArrayObject* input = reinterpret_cast<PyArrayObject*>(obj);
-  DataType dtype;
-  TensorShape shape;
-  for (int i = 0; i < PyArray_NDIM(input); ++i) {
-    shape.AddDim(PyArray_SHAPE(input)[i]);
-  }
-  const int np_type = PyArray_TYPE(input);
-  switch (np_type) {
-    case NPY_OBJECT: {
-      dtype = DT_STRING;
-      Tensor t(dtype, shape);
-      auto tflat = t.flat<string>();
-      PyObject** input_data = reinterpret_cast<PyObject**>(PyArray_DATA(input));
-      for (int i = 0; i < tflat.dimension(0); ++i) {
-        char* el;
-        Py_ssize_t el_size;
-        if (PyBytes_AsStringAndSize(input_data[i], &el, &el_size) == -1) {
-          return errors::Unimplemented("Unsupported object type ",
-                                       input_data[i]->ob_type->tp_name);
-        }
-        tflat(i) = string(el, el_size);
-      }
-      *ret = t;
-      break;
-    }
-    case NPY_STRING: {
-      dtype = DT_STRING;
-      Tensor t(dtype, shape);
-      auto tflat = t.flat<string>();
-      char* input_data = PyArray_BYTES(input);
-      Py_ssize_t el_size = PyArray_ITEMSIZE(input);
-      for (int i = 0; i < tflat.dimension(0); ++i) {
-        tflat(i) = string(input_data + i * el_size, el_size);
-      }
-      *ret = t;
-      break;
-    }
-    default: {
-      TF_RETURN_IF_ERROR(NumericNpDTypeToTfDType(PyArray_TYPE(input), &dtype));
-      Tensor t(dtype, shape);
-      CHECK(DataTypeCanUseMemcpy(dtype));
-      StringPiece p = t.tensor_data();
-      memcpy(const_cast<char*>(p.data()), PyArray_DATA(input), p.size());
-      *ret = t;
-    }
-  }
-  return Status::OK();
-}
-
 // Calls the registered py function through the trampoline.
 Status DoCallPyFunc(PyCall* call) {
   PyObject* trampoline = GetPyTrampoline();
@@ -267,19 +206,57 @@ Status DoCallPyFunc(PyCall* call) {
   return s;
 }
 
-// Calls the python function in a separate thread. Arranges to call
-// done() when the python function returns.
-void CallPyFunc(PyCall* call, std::function<void(Status)> done) {
-  py_thread()->Schedule([call, done]() {
-    PyGILState_STATE py_threadstate;
-    py_threadstate = PyGILState_Ensure();
-    Status s = DoCallPyFunc(call);
-    PyGILState_Release(py_threadstate);
-    done(s);
-  });
-}
-
 }  // end namespace
+
+Status ConvertNdarrayToTensor(PyObject* obj, Tensor* ret) {
+  PyArrayObject* input = reinterpret_cast<PyArrayObject*>(obj);
+  DataType dtype;
+  TensorShape shape;
+  for (int i = 0; i < PyArray_NDIM(input); ++i) {
+    shape.AddDim(PyArray_SHAPE(input)[i]);
+  }
+  const int np_type = PyArray_TYPE(input);
+  switch (np_type) {
+    case NPY_OBJECT: {
+      dtype = DT_STRING;
+      Tensor t(dtype, shape);
+      auto tflat = t.flat<string>();
+      PyObject** input_data = reinterpret_cast<PyObject**>(PyArray_DATA(input));
+      for (int i = 0; i < tflat.dimension(0); ++i) {
+        char* el;
+        Py_ssize_t el_size;
+        if (PyBytes_AsStringAndSize(input_data[i], &el, &el_size) == -1) {
+          return errors::Unimplemented("Unsupported object type ",
+                                       input_data[i]->ob_type->tp_name);
+        }
+        tflat(i) = string(el, el_size);
+      }
+      *ret = t;
+      break;
+    }
+    case NPY_STRING: {
+      dtype = DT_STRING;
+      Tensor t(dtype, shape);
+      auto tflat = t.flat<string>();
+      char* input_data = PyArray_BYTES(input);
+      Py_ssize_t el_size = PyArray_ITEMSIZE(input);
+      for (int i = 0; i < tflat.dimension(0); ++i) {
+        tflat(i) = string(input_data + i * el_size, el_size);
+      }
+      *ret = t;
+      break;
+    }
+    default: {
+      TF_RETURN_IF_ERROR(NumericNpDTypeToTfDType(PyArray_TYPE(input), &dtype));
+      Tensor t(dtype, shape);
+      CHECK(DataTypeCanUseMemcpy(dtype));
+      StringPiece p = t.tensor_data();
+      memcpy(const_cast<char*>(p.data()), PyArray_DATA(input), p.size());
+      *ret = t;
+    }
+  }
+  return Status::OK();
+}
 
 // Creates a numpy array in 'ret' and copies the content of tensor 't'
 // into 'ret'.
@@ -332,39 +309,40 @@ void InitializePyTrampoline(PyObject* trampoline) {
   }
 }
 
-class PyFuncOp : public AsyncOpKernel {
+class PyFuncOp : public OpKernel {
  public:
-  explicit PyFuncOp(OpKernelConstruction* ctx) : AsyncOpKernel(ctx) {
+  explicit PyFuncOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
     OP_REQUIRES_OK(ctx, ctx->GetAttr("token", &token_));
   }
 
-  void ComputeAsync(OpKernelContext* ctx, DoneCallback done) override {
-    PyCall* call = new PyCall;
-    call->token = token_;
+  void Compute(OpKernelContext* ctx) override {
+    PyCall call;
+    call.token = token_;
     for (int i = 0; i < ctx->num_inputs(); ++i) {
-      call->ins.push_back(ctx->input(i));
+      call.ins.push_back(ctx->input(i));
     }
-    CallPyFunc(call, [this, ctx, call, done](Status s) {
-      std::unique_ptr<PyCall> delete_me(call);
-      OP_REQUIRES_OK_ASYNC(ctx, s, done);
-      OP_REQUIRES_ASYNC(
-          ctx, static_cast<int32>(call->out.size()) == ctx->num_outputs(),
-          errors::InvalidArgument(token_, " returns ", call->out.size(),
-                                  " values, but expects to see ",
-                                  ctx->num_outputs(), " values."),
-          done);
-      for (size_t i = 0; i < call->out.size(); ++i) {
-        const auto& t = call->out[i];
-        OP_REQUIRES_ASYNC(
-            ctx, t.dtype() == output_type(i),
-            errors::InvalidArgument(i, "-th value returned by ", token_, " is ",
-                                    DataTypeString(t.dtype()), ", but expects ",
-                                    DataTypeString(output_type(i))),
-            done);
-        ctx->set_output(i, t);
-      }
-      done();
-    });
+
+    PyGILState_STATE py_threadstate;
+    py_threadstate = PyGILState_Ensure();
+    Status s = DoCallPyFunc(&call);
+    PyGILState_Release(py_threadstate);
+
+    // Ensures that GIL is released even when !s.ok().
+    OP_REQUIRES_OK(ctx, s);
+
+    OP_REQUIRES(ctx, static_cast<int32>(call.out.size()) == ctx->num_outputs(),
+                errors::InvalidArgument(token_, " returns ", call.out.size(),
+                                        " values, but expects to see ",
+                                        ctx->num_outputs(), " values."));
+    for (size_t i = 0; i < call.out.size(); ++i) {
+      const auto& t = call.out[i];
+      OP_REQUIRES(
+          ctx, t.dtype() == output_type(i),
+          errors::InvalidArgument(i, "-th value returned by ", token_, " is ",
+                                  DataTypeString(t.dtype()), ", but expects ",
+                                  DataTypeString(output_type(i))));
+      ctx->set_output(i, t);
+    }
   }
 
  private:
@@ -373,5 +351,6 @@ class PyFuncOp : public AsyncOpKernel {
   TF_DISALLOW_COPY_AND_ASSIGN(PyFuncOp);
 };
 REGISTER_KERNEL_BUILDER(Name("PyFunc").Device(DEVICE_CPU), PyFuncOp);
+REGISTER_KERNEL_BUILDER(Name("PyFuncStateless").Device(DEVICE_CPU), PyFuncOp);
 
 }  // end namespace tensorflow

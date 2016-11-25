@@ -24,6 +24,7 @@ limitations under the License.
 #include "tensorflow/core/lib/core/errors.h"
 #include "tensorflow/core/lib/core/status.h"
 #include "tensorflow/core/lib/core/stringpiece.h"
+#include "tensorflow/core/platform/file_statistics.h"
 #include "tensorflow/core/platform/macros.h"
 #include "tensorflow/core/platform/protobuf.h"
 #include "tensorflow/core/platform/types.h"
@@ -43,22 +44,33 @@ class FileSystem {
 
   /// The following functions are the implementations used by the corresponding
   /// functions in the Env class.
-  virtual Status NewRandomAccessFile(const string& fname,
-                                     RandomAccessFile** result) = 0;
+  virtual Status NewRandomAccessFile(
+      const string& fname, std::unique_ptr<RandomAccessFile>* result) = 0;
 
   virtual Status NewWritableFile(const string& fname,
-                                 WritableFile** result) = 0;
+                                 std::unique_ptr<WritableFile>* result) = 0;
 
   virtual Status NewAppendableFile(const string& fname,
-                                   WritableFile** result) = 0;
+                                   std::unique_ptr<WritableFile>* result) = 0;
 
   virtual Status NewReadOnlyMemoryRegionFromFile(
-      const string& fname, ReadOnlyMemoryRegion** result) = 0;
+      const string& fname, std::unique_ptr<ReadOnlyMemoryRegion>* result) = 0;
 
   virtual bool FileExists(const string& fname) = 0;
 
+  /// \brief Returns the immediate children in the given directory.
+  ///
+  /// The returned paths are relative to 'dir'.
   virtual Status GetChildren(const string& dir,
                              std::vector<string>* result) = 0;
+
+  /// \brief Recursively returns all the files in the given directory.
+  ///
+  /// The returned paths are relative to 'dir'.
+  virtual Status GetChildrenRecursively(const string& dir,
+                                        std::vector<string>* result);
+
+  virtual Status Stat(const string& fname, FileStatistics* stat) = 0;
 
   virtual Status DeleteFile(const string& fname) = 0;
 
@@ -68,13 +80,27 @@ class FileSystem {
 
   virtual Status GetFileSize(const string& fname, uint64* file_size) = 0;
 
+  // Overwrites the target if it exists.
   virtual Status RenameFile(const string& src, const string& target) = 0;
 
   // Translate an URI to a filename usable by the FileSystem implementation. The
-  // implementation in this class returns the name as-is.
+  // implementation in this class cleans up the path, removing duplicate /'s,
+  // resolving .. and . (more details in tensorflow::lib::io::CleanPath).
   virtual string TranslateName(const string& name) const;
+
+  // Returns whether the given path is a directory or not.
+  // Typical return codes (not guaranteed exhaustive):
+  //  * OK - The path exists and is a directory.
+  //  * FAILED_PRECONDITION - The path exists and is not a directory.
+  //  * NOT_FOUND - The path entry does not exist.
+  //  * PERMISSION_DENIED - Insufficient permissions.
+  //  * UNIMPLEMENTED - The file factory doesn't support directories.
+  virtual Status IsDirectory(const string& fname);
 };
 
+// START_SKIP_DOXYGEN
+
+#ifndef SWIG
 // Degenerate file system that provides no implementations.
 class NullFileSystem : public FileSystem {
  public:
@@ -82,22 +108,24 @@ class NullFileSystem : public FileSystem {
 
   ~NullFileSystem() override = default;
 
-  Status NewRandomAccessFile(const string& fname,
-                             RandomAccessFile** result) override {
+  Status NewRandomAccessFile(
+      const string& fname, std::unique_ptr<RandomAccessFile>* result) override {
     return errors::Unimplemented("NewRandomAccessFile unimplemented");
   }
 
-  Status NewWritableFile(const string& fname, WritableFile** result) override {
+  Status NewWritableFile(const string& fname,
+                         std::unique_ptr<WritableFile>* result) override {
     return errors::Unimplemented("NewWritableFile unimplemented");
   }
 
   Status NewAppendableFile(const string& fname,
-                           WritableFile** result) override {
+                           std::unique_ptr<WritableFile>* result) override {
     return errors::Unimplemented("NewAppendableFile unimplemented");
   }
 
   Status NewReadOnlyMemoryRegionFromFile(
-      const string& fname, ReadOnlyMemoryRegion** result) override {
+      const string& fname,
+      std::unique_ptr<ReadOnlyMemoryRegion>* result) override {
     return errors::Unimplemented(
         "NewReadOnlyMemoryRegionFromFile unimplemented");
   }
@@ -127,7 +155,14 @@ class NullFileSystem : public FileSystem {
   Status RenameFile(const string& src, const string& target) override {
     return errors::Unimplemented("RenameFile unimplemented");
   }
+
+  Status Stat(const string& fname, FileStatistics* stat) override {
+    return errors::Unimplemented("Stat unimplemented");
+  }
 };
+#endif
+
+// END_SKIP_DOXYGEN
 
 /// A file abstraction for randomly reading the contents of a file.
 class RandomAccessFile {
@@ -154,9 +189,7 @@ class RandomAccessFile {
                       char* scratch) const = 0;
 
  private:
-  /// No copying allowed
-  RandomAccessFile(const RandomAccessFile&);
-  void operator=(const RandomAccessFile&);
+  TF_DISALLOW_COPY_AND_ASSIGN(RandomAccessFile);
 };
 
 /// \brief A file abstraction for sequential writing.
@@ -174,9 +207,7 @@ class WritableFile {
   virtual Status Sync() = 0;
 
  private:
-  /// No copying allowed
-  WritableFile(const WritableFile&);
-  void operator=(const WritableFile&);
+  TF_DISALLOW_COPY_AND_ASSIGN(WritableFile);
 };
 
 /// \brief A readonly memmapped file abstraction.
@@ -208,11 +239,18 @@ class FileSystemRegistry {
       std::vector<string>* schemes) = 0;
 };
 
-// Given URI of the form [scheme://]<filename>, return 'scheme'.
-string GetSchemeFromURI(const string& name);
+// Populates the scheme, host, and path from a URI.
+//
+// Corner cases:
+// - If the URI is invalid, scheme and host are set to empty strings and the
+//   passed string is assumed to be a path
+// - If the URI omits the path (e.g. file://host), then the path is left empty.
+void ParseURI(StringPiece uri, StringPiece* scheme, StringPiece* host,
+              StringPiece* path);
 
-// Given URI of the form [scheme://]<filename>, return 'filename'.
-string GetNameFromURI(const string& name);
+// Creates a URI from a scheme, host, and path. If the scheme is empty, we just
+// return the path.
+string CreateURI(StringPiece scheme, StringPiece host, StringPiece path);
 
 }  // namespace tensorflow
 

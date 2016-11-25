@@ -19,9 +19,9 @@ from __future__ import division
 from __future__ import print_function
 
 import sys
+import unittest
 
-from tensorflow.python.platform import googletest
-
+from tensorflow.python.platform import app
 from tensorflow.python.platform import flags
 
 
@@ -31,6 +31,7 @@ flags.DEFINE_float("float_foo", 42.0, "HelpString")
 
 flags.DEFINE_boolean("bool_foo", True, "HelpString")
 flags.DEFINE_boolean("bool_negation", True, "HelpString")
+flags.DEFINE_boolean("bool-dash-negation", True, "HelpString")
 flags.DEFINE_boolean("bool_a", False, "HelpString")
 flags.DEFINE_boolean("bool_c", False, "HelpString")
 flags.DEFINE_boolean("bool_d", True, "HelpString")
@@ -38,7 +39,7 @@ flags.DEFINE_bool("bool_e", True, "HelpString")
 
 FLAGS = flags.FLAGS
 
-class FlagsTest(googletest.TestCase):
+class FlagsTest(unittest.TestCase):
 
   def testString(self):
     res = FLAGS.string_foo
@@ -67,9 +68,6 @@ class FlagsTest(googletest.TestCase):
     # --bool_flag=False sets to False
     self.assertEqual(False, FLAGS.bool_d)
 
-    # --bool_flag=gibberish sets to False
-    self.assertEqual(False, FLAGS.bool_e)
-
   def testInt(self):
     res = FLAGS.int_foo
     self.assertEquals(res, 42)
@@ -83,14 +81,18 @@ class FlagsTest(googletest.TestCase):
     self.assertEqual(-1.0, FLAGS.float_foo)
 
 
+def main(_):
+  # unittest.main() tries to interpret the unknown flags, so use the
+  # direct functions instead.
+  runner = unittest.TextTestRunner()
+  itersuite = unittest.TestLoader().loadTestsFromTestCase(FlagsTest)
+  runner.run(itersuite)
+
+
 if __name__ == "__main__":
   # Test command lines
-  sys.argv.extend(["--bool_a", "--nobool_negation", "--bool_c=True",
-                   "--bool_d=False", "--bool_e=gibberish", "--unknown_flag",
-                   "and_argument"])
+  sys.argv.extend(["--bool_a", "--nobool_negation",
+                   "--bool_c=True", "--bool_d=False",
+                   "--unknown_flag", "and_argument"])
 
-  # googletest.main() tries to interpret the above flags, so use the
-  # direct functions instead.
-  runner = googletest.TextTestRunner()
-  itersuite = googletest.TestLoader().loadTestsFromTestCase(FlagsTest)
-  runner.run(itersuite)
+  app.run()

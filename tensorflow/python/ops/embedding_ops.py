@@ -20,12 +20,13 @@ from __future__ import print_function
 
 from six.moves import xrange  # pylint: disable=redefined-builtin
 
+from tensorflow.python.framework import constant_op
 from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import ops
 from tensorflow.python.ops import array_ops
-from tensorflow.python.ops import constant_op
 from tensorflow.python.ops import data_flow_ops
 from tensorflow.python.ops import math_ops
+from tensorflow.python.platform import tf_logging as logging
 
 
 def embedding_lookup(params, ids, partition_strategy="mod", name=None,
@@ -73,11 +74,11 @@ def embedding_lookup(params, ids, partition_strategy="mod", name=None,
   Raises:
     ValueError: If `params` is empty.
   """
+  if params is None or params == []:  # pylint: disable=g-explicit-bool-comparison
+    raise ValueError("Need at least one param")
   if not isinstance(params, list):
     params = [params]
-  with ops.op_scope(params + [ids], name, "embedding_lookup") as name:
-    if not params:
-      raise ValueError("Need at least one param")
+  with ops.name_scope(name, "embedding_lookup", params + [ids]) as name:
     np = len(params)  # Number of partitions
     params = ops.convert_n_to_tensor_or_indexed_slices(params, name="params")
     if np == 1:
@@ -170,11 +171,10 @@ def embedding_lookup(params, ids, partition_strategy="mod", name=None,
       return ret
 
 
-# TODO(lif): Add support for higher-rank SparseTensors
 def embedding_lookup_sparse(params, sp_ids, sp_weights,
                             partition_strategy="mod",
                             name=None,
-                            combiner="mean"):
+                            combiner=None):
   """Computes embeddings for the given ids and weights.
 
   This op assumes that there is at least one id for each row in the dense tensor
@@ -234,6 +234,10 @@ def embedding_lookup_sparse(params, sp_ids, sp_weights,
       None nor SparseTensor.
     ValueError: If combiner is not one of {"mean", "sqrtn", "sum"}.
   """
+  if combiner is None:
+    logging.warn("The default value of combiner will change from \"mean\" "
+                 "to \"sqrtn\" after 2016/11/01.")
+    combiner = "mean"
   if combiner not in ("mean", "sqrtn", "sum"):
     raise ValueError("combiner must be one of 'mean', 'sqrtn' or 'sum'")
   if not isinstance(params, list):
@@ -253,7 +257,8 @@ def embedding_lookup_sparse(params, sp_ids, sp_weights,
     # TODO(yleon): Add enhanced node assertions to verify that sp_ids and
     # sp_weights have equal indices and shapes.
 
-  with ops.op_scope(params + [sp_ids], name, "embedding_lookup_sparse") as name:
+  with ops.name_scope(name, "embedding_lookup_sparse",
+                      params + [sp_ids]) as name:
     segment_ids = sp_ids.indices[:, 0]
     if segment_ids.dtype != dtypes.int32:
       segment_ids = math_ops.cast(segment_ids, dtypes.int32)

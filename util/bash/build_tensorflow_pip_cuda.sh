@@ -1,6 +1,6 @@
 #! /bin/bash
 
-if [ "$1" -eq "r" ]; then
+if [ "$1" = "r" ]; then
     bazel clean 
     pip uninstall tensorflow
     rm -rf _python_build
@@ -8,7 +8,7 @@ fi
 
 
 PYTHON_BIN_PATH=/usr/bin/python3 TF_NEED_CUDA=1 ./configure
-bazel build -c opt --config=cuda //tensorflow/tools/pip_package:build_pip_package --spawn_strategy=standalone --genrule_strategy=standalone --jobs 4 
+bazel build -c opt --config=cuda //tensorflow/tools/pip_package:build_pip_package
 
 if [ $? -eq 0 ]; then
     echo "### Succesiful build, installing pip package"

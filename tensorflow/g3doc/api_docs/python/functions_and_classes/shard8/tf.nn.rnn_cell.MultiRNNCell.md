@@ -1,7 +1,14 @@
 RNN cell composed sequentially of multiple simple cells.
 - - -
 
-#### `tf.nn.rnn_cell.MultiRNNCell.__init__(cells, state_is_tuple=False)` {#MultiRNNCell.__init__}
+#### `tf.nn.rnn_cell.MultiRNNCell.__call__(inputs, state, scope=None)` {#MultiRNNCell.__call__}
+
+Run this multi-layer cell on inputs, starting from state.
+
+
+- - -
+
+#### `tf.nn.rnn_cell.MultiRNNCell.__init__(cells, state_is_tuple=True)` {#MultiRNNCell.__init__}
 
 Create a RNN cell composed sequentially of a number of RNNCells.
 
@@ -10,8 +17,9 @@ Create a RNN cell composed sequentially of a number of RNNCells.
 
 *  <b>`cells`</b>: list of RNNCells that will be composed in this order.
 *  <b>`state_is_tuple`</b>: If True, accepted and returned states are n-tuples, where
-    `n = len(cells)`.  By default (False), the states are all
-    concatenated along the column axis.
+    `n = len(cells)`.  If False, the states are all
+    concatenated along the column axis.  This latter behavior will soon be
+    deprecated.
 
 ##### Raises:
 
@@ -48,8 +56,8 @@ Return zero-filled state tensor(s).
 
 ##### Returns:
 
-  If `state_size` is an int, then the return value is a `2-D` tensor of
-  shape `[batch_size x state_size]` filled with zeros.
+  If `state_size` is an int or TensorShape, then the return value is a
+  `N-D` tensor of shape `[batch_size x state_size]` filled with zeros.
 
   If `state_size` is a nested list or tuple, then the return value is
   a nested list or tuple (of the same structure) of `2-D` tensors with
