@@ -38,11 +38,6 @@ ops.RegisterShape("Svd")(common_shapes.call_cpp_shape_fn)
 ops.RegisterShape("MatrixSolve")(common_shapes.call_cpp_shape_fn)
 ops.RegisterShape("MatrixTriangularSolve")(common_shapes.call_cpp_shape_fn)
 ops.RegisterShape("MatrixSolveLs")(common_shapes.call_cpp_shape_fn)
-@ops.RegisterShape("MatrixDecompSvd")
-def _MatrixDecompSvdS(op):
-  matrix_shape = op.inputs[0].get_shape().with_rank(2)
-  smallDim = min( matrix_shape[0], matrix_shape[1] ) 
-  return [ [matrix_shape[0], smallDim ], [smallDim], [matrix_shape[1], smallDim ] ]
 
 @ops.RegisterShape("MatrixDecompSvdRand")
 def _MatrixDecompSvdS(op):

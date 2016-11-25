@@ -423,13 +423,6 @@ output: Shape is `[..., N, K]`.
 l2_regularizer: Scalar tensor.
 )doc");
 
-REGISTER_OP("MatrixDecompSvd")
-.Input("matrix: T")
-.Output("u: T")
-.Output("s: T")
-.Output("v: T")
-.Attr("T: {float, double}");
-
 REGISTER_OP("MatrixDecompSvdRand")
 .Input("matrix: T")
 .Input("k: int32")

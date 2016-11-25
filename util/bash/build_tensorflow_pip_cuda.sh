@@ -2,12 +2,12 @@
 
 if [ "$1" = "r" ]; then
     bazel clean 
-    pip uninstall tensorflow
+    pip3 uninstall tensorflow
     rm -rf _python_build
+    PYTHON_BIN_PATH=/usr/bin/python3 TF_NEED_CUDA=1 ./configure
 fi
 
 
-PYTHON_BIN_PATH=/usr/bin/python3 TF_NEED_CUDA=1 ./configure
 bazel build -c opt --config=cuda //tensorflow/tools/pip_package:build_pip_package
 
 if [ $? -eq 0 ]; then

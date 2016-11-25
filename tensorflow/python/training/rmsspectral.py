@@ -67,7 +67,7 @@ class RMSSpectralOptimizer(training.rmsprop.RMSPropOptimizer):
                 math_ops.reduce_sum(s))
 
     def _sharpOp(self, vector):
-        u, s, v = linalg_ops.matrix_decomp_svd(vector)
+        u, s, v = linalg_ops.svd(vector)
 
         return (math_ops.matmul(u, array_ops.transpose(v)) *
                 math_ops.reduce_sum(s))
@@ -88,8 +88,9 @@ class RMSSpectralOptimizer(training.rmsprop.RMSPropOptimizer):
                                 math_ops.square(grad))
         aux = math_ops.sqrt(math_ops.sqrt(rms_update)+epsilon)
 
-        sharpGrad = (self._sharpOp(grad / aux) if min(grad.get_shape()) < self._svd_approx_size
-                     else self._approxSharp(grad / aux, self._svd_approx_size))
+        #sharpGrad = (self._sharpOp(grad / aux) if min(grad.get_shape()) < self._svd_approx_size
+        #             else self._approxSharp(grad / aux, self._svd_approx_size))
+        sharpGrad = self._sharpOp(grad / aux)
         update = (lr *
                   (sharpGrad / aux))
 
