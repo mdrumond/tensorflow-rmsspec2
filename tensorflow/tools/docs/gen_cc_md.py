@@ -21,7 +21,7 @@ from __future__ import print_function
 import os
 import re
 
-from BeautifulSoup import BeautifulStoneSoup
+from bs4 import BeautifulSoup
 import tensorflow as tf
 
 
@@ -195,7 +195,7 @@ def page_overview(class_elt):
 
 def page_with_name(pages, name):
   def match(n):
-    for i in xrange(len(pages)):
+    for i in range(len(pages)):
       if pages[i].get_name() == n:
         return i
     return None
@@ -247,8 +247,8 @@ class Page(object):
     xml = xml_file.read()
     xml = xml.replace('<computeroutput>', '`').replace('</computeroutput>', '`')
     # TODO(josh11b): Should not use HTML entities inside ```...```.
-    soup = BeautifulStoneSoup(
-        xml, convertEntities=BeautifulStoneSoup.HTML_ENTITIES)
+    soup = BeautifulSoup(
+        xml, "xml")
     self.name = soup.find('compoundname').text
     print('Making page with name ' + self.name + ' (from ' + xml_path + ')')
     members = soup('memberdef', prot='public')
