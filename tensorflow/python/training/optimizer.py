@@ -22,7 +22,7 @@ from __future__ import print_function
 
 from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import ops
-#from tensorflow.python.ops import constant_op
+from tensorflow.python.framework import constant_op
 from tensorflow.python.ops import control_flow_ops
 from tensorflow.python.ops import gradients
 from tensorflow.python.ops import state_ops
@@ -440,8 +440,7 @@ class Optimizer(object):
     """
     for v in var_list:
       if v in pruning_tables:
-        #val = constant_op.constant(pruning_tables[v], dtype=bool, shape=v.get_shape())
-        val = None
+        val = constant_op.constant(pruning_tables[v], dtype=bool, shape=v.get_shape())
         self._get_or_make_slot(v, val, self._pruning_table_slot, self._name)
 
   def _create_slots(self, var_list):

@@ -67,8 +67,9 @@ class RMSSpectralOptimizer(training.rmsprop.RMSPropOptimizer):
                 math_ops.reduce_sum(s))
 
     def _sharpOp(self, vector):
-        u, s, v = linalg_ops.svd(vector)
+        s, u ,v  = linalg_ops.svd(vector)
 
+        
         return (math_ops.matmul(u, array_ops.transpose(v)) *
                 math_ops.reduce_sum(s))
 
