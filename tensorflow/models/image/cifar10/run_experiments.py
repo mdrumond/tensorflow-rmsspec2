@@ -99,26 +99,26 @@ exp_dic = {
 
     "rmsprop": Experiment(name="rmsprop", method="rmsprop", batch_size=128,
                           lr=0.01, lr_decay=.01,
-                          momentum=.9, epsilon=1e-8, rms_decay=.98,
+                          momentum=.9, epsilon=0.1, rms_decay=.9,
                           use_locking=True),
 
     "rmsprop-no-mom": Experiment(name="rmsprop-no-mom", method="rmsprop",
                                  batch_size=128,
                                  lr=0.01, lr_decay=.01,
-                                 momentum=0, epsilon=1e-8, rms_decay=.98,
+                                 momentum=0, epsilon=0.1, rms_decay=.9,
                                  use_locking=True),
 
     "rmsspectral":  Experiment(name="rmsspectral", method="rmsspectral",
                                batch_size=1024, lr=.001,
-                               lr_decay=.5, momentum=.9, epsilon=1e-8,
+                               lr_decay=.5, momentum=.9, epsilon=0.05,
                                rms_decay=.98,
                                use_locking=True),
 
     "rmsspectral-no-mom":  Experiment(name="rmsspectral-no-mom",
                                       method="rmsspectral",
                                       batch_size=1024,
-                                      lr=.001, lr_decay=.5, momentum=0,
-                                      epsilon=1e-8, rms_decay=.98,
+                                      lr=.01, lr_decay=.5, momentum=0,
+                                      epsilon=0.05, rms_decay=.9,
                                       use_locking=True)
 }
 
