@@ -15,6 +15,10 @@ limitations under the License.
 
 #define EIGEN_USE_THREADS
 
+#include "third_party/eigen3/Eigen/Core"
+#include "third_party/eigen3/Eigen/SVD"
+#include "tensorflow/core/lib/gtl/inlined_vector.h"
+
 #include "tensorflow/core/kernels/training_ops.h"
 #include <algorithm>
 #include "tensorflow/core/framework/op_kernel.h"
@@ -255,6 +259,7 @@ struct ApplyRMSProp<CPUDevice, T> {
   }
 };
 
+  
 }  // namespace functor
 
 // MaybeLockMutexesInOrder is a helper function to acquire mutexes in address
@@ -2401,4 +2406,190 @@ REGISTER_KERNELS(double, int64);
 
 #undef REGISTER_KERNELS
 
+
+template <typename Device, typename T>
+class ApplyRMSSpectralOp : public OpKernel {
+ public:
+  explicit ApplyRMSSpectralOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("use_locking", &use_exclusive_lock_));
+  }
+
+  using Matrix =
+      Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
+  using ConstMatrixMap = Eigen::Map<const Matrix>;
+  using MatrixMap = Eigen::Map<Matrix>;
+  
+  void ApplyRMSSpectral(const CPUDevice& d, typename TTypes<T>::Flat var,
+                        typename TTypes<T>::Flat ms, typename TTypes<T>::Flat mom,
+                        typename TTypes<T>::ConstScalar lr,
+                        typename TTypes<T>::ConstScalar rho,
+                        typename TTypes<T>::ConstScalar momentum,
+                        typename TTypes<T>::ConstScalar epsilon,
+                        typename TTypes<T>::Flat sharp_aux,                        
+                        typename TTypes<T>::Flat sharp_aux2,                        
+                        typename TTypes<T>::ConstFlat grad,
+                        const TensorShape& grad_shape) {
+    
+    ms.device(d) += (grad.square() - ms) * (static_cast<T>(1) - rho());
+    mom.device(d) = mom;
+    
+    auto aux = (epsilon() + ms.sqrt()).sqrt();
+    sharp_aux = grad / aux;
+    auto input_matrix = MatrixMap(sharp_aux.data(),
+                                  grad_shape.dim_size(0),
+                                  grad_shape.dim_size(1));
+    
+    auto output_matrix =  MatrixMap(sharp_aux2.data(),
+                                    grad_shape.dim_size(0),
+                                    grad_shape.dim_size(1));
+
+    Eigen::BDCSVD<Matrix> svd;
+    
+    if( use_approx_sharp_ ) {
+      int64 inSmallDim = (grad_shape.dim_size(0) < grad_shape.dim_size(1))?
+        grad_shape.dim_size(0) : grad_shape.dim_size(1);
+      int64 inBigDim = (grad_shape.dim_size(0) < grad_shape.dim_size(1))?
+        grad_shape.dim_size(1) : grad_shape.dim_size(0);
+      bool transpose = (grad_shape.dim_size(0) > grad_shape.dim_size(1))? true : false;
+
+      Matrix randIn(Matrix::Random(inSmallDim, inSmallDim));
+      Matrix id(Matrix::Identity(inBigDim, inSmallDim));
+
+      if(transpose){
+        input_matrix.transposeInPlace();
+      }
+
+      auto q = (input_matrix * randIn).householderQr().householderQ()*id;
+      svd.compute(q.transpose() * input_matrix,
+                  Eigen::ComputeThinU | Eigen::ComputeThinV);
+
+      
+      auto uHat = svd.matrixU();
+      auto s = svd.singularValues().template cast<T>();
+      auto v = svd.matrixV();
+
+      auto u = q*uHat;
+
+      if(transpose){
+        output_matrix = s.sum() * (v * u.transpose());
+      }
+      else {
+        output_matrix = s.sum() * (u * v.transpose());
+      }
+    }
+    else {
+
+      svd.compute(input_matrix,
+                  Eigen::ComputeThinU | Eigen::ComputeThinV);
+    
+      auto s = svd.singularValues().template cast<T>();
+      auto u  = svd.matrixU();
+      auto v  = svd.matrixV();
+
+      output_matrix = s.sum() * u * v.transpose();
+    
+    }
+    
+    var.device(d) -= (lr() * sharp_aux2) / aux;
+
+    mom.device(d) = mom;    
+  }
+  
+  void Compute(OpKernelContext* ctx) override {
+    auto locks = MaybeLockMutexesInOrder(ctx, use_exclusive_lock_, {0, 1, 2});
+
+    Tensor var = ctx->mutable_input(0, use_exclusive_lock_);
+    Tensor ms = ctx->mutable_input(1, use_exclusive_lock_);
+    Tensor mom = ctx->mutable_input(2, use_exclusive_lock_);
+
+    
+    Tensor sharp_aux;
+    Tensor sharp_aux2;
+
+    OP_REQUIRES_OK(ctx,
+                   ctx->allocate_temp(DataTypeToEnum<T>::v(),
+                                          var.shape(), &sharp_aux));
+
+    OP_REQUIRES_OK(ctx,
+                   ctx->allocate_temp(DataTypeToEnum<T>::v(),
+                                          var.shape(), &sharp_aux2));
+    
+    OP_REQUIRES(
+        ctx, var.IsInitialized(),
+        errors::FailedPrecondition(
+            "Attempting to use uninitialized variables: ", def().input(0)));
+    OP_REQUIRES(
+        ctx, ms.IsInitialized(),
+        errors::FailedPrecondition(
+            "Attempting to use uninitialized variables: ", def().input(1)));
+    OP_REQUIRES(
+        ctx, mom.IsInitialized(),
+        errors::FailedPrecondition(
+            "Attempting to use uninitialized variables: ", def().input(2)));
+
+    const Tensor& lr = ctx->input(3);
+    const Tensor& rho = ctx->input(4);
+    const Tensor& momentum = ctx->input(5);
+    const Tensor& epsilon = ctx->input(6);
+    const Tensor& grad = ctx->input(7);
+
+    OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(lr.shape()),
+                errors::InvalidArgument("lr is not a scalar : ",
+                                        lr.shape().DebugString()));
+    OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(rho.shape()),
+                errors::InvalidArgument("rho is not a scalar: ",
+                                        rho.shape().DebugString()));
+    OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(momentum.shape()),
+                errors::InvalidArgument("momentum is not a scalar: ",
+                                        momentum.shape().DebugString()));
+    OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(epsilon.shape()),
+                errors::InvalidArgument("epsilon is not a scalar: ",
+                                        epsilon.shape().DebugString()));
+
+    OP_REQUIRES(ctx, var.shape().IsSameSize(ms.shape()),
+                errors::InvalidArgument("var and ms do not have the same shape",
+                                        var.shape().DebugString(), " ",
+                                        ms.shape().DebugString()));
+
+    OP_REQUIRES(ctx, var.shape().IsSameSize(mom.shape()),
+                errors::InvalidArgument(
+                    "var and mom do not have the same shape",
+                    var.shape().DebugString(), " ", mom.shape().DebugString()));
+
+    OP_REQUIRES(
+        ctx, var.shape().IsSameSize(grad.shape()),
+        errors::InvalidArgument("var and grad do not have the same shape",
+                                var.shape().DebugString(), " ",
+                                grad.shape().DebugString()));
+
+    const Device& device = ctx->template eigen_device<Device>();
+    ApplyRMSSpectral(device, var.flat<T>(), ms.flat<T>(),
+                     mom.flat<T>(), lr.scalar<T>(),
+                     rho.scalar<T>(), momentum.scalar<T>(),
+                     epsilon.scalar<T>(), sharp_aux.flat<T>(),
+                     sharp_aux2.flat<T>(),
+                     grad.flat<T>(),
+                     grad.shape());
+
+    ctx->forward_ref_input_to_ref_output(0, 0);
+  }
+
+ private:
+  bool use_exclusive_lock_;
+  bool use_approx_sharp_;
+};
+
+using CPUDevice = Eigen::ThreadPoolDevice;
+
+#define REGISTER_KERNELS(T)                                   \
+  REGISTER_KERNEL_BUILDER(Name("ApplyRMSSpectral")            \
+                               .Device(DEVICE_CPU)            \
+                               .TypeConstraint<T>("T"),       \
+                          ApplyRMSSpectralOp<CPUDevice,T>);
+
+REGISTER_KERNELS(float);
+REGISTER_KERNELS(double);
+
+#undef REGISTER_KERNELS
+  
 }  // namespace tensorflow

@@ -8,7 +8,8 @@ from subprocess import call
 parser = argparse.ArgumentParser(description='Run a training experiment')
 
 parser.add_argument('-e', '--experiment', action='append',
-                    choices=['sgd', 'rmsprop', 'rmsspectral',
+                    choices=['sgd', 'rmsprop', 'rmsprop-no-mom',
+                             'rmsspectral',
                              'rmsspectral-no-mom'])
 parser.add_argument('-f', '--experiment-folder',
                     default='./results')
@@ -16,10 +17,15 @@ parser.add_argument('-n', '--number-images', type=int,
                     default=128000)
 parser.add_argument('-t', action='store_true',
                     help='Test run, do not run QEMU, just prints command')
+parser.add_argument('--assync', action='store_true',
+                    help='Run assynchronous models')
+parser.add_argument('--approx', action='store_true',
+                    help='Run use approximated sharp for RMSSpectral')
 parser.add_argument('-F', '--force', action='store_true',
                     help='Force overwriting of results folders')
 parser.add_argument('-s', '--training-scripts',
                     default='cifar10_multi_gpu_train.py')
+
 args = parser.parse_args()
 
 
@@ -48,6 +54,7 @@ def ask_yes_no(question):
 class Experiment(object):
     def __init__(self, name, method, batch_size, lr, lr_decay,
                  momentum=None, epsilon=None, rms_decay=None,
+                 use_approx_sharp=False,
                  use_locking=False):
         self.name = name
         self._method = method
@@ -57,6 +64,7 @@ class Experiment(object):
         self._momentum = momentum
         self._epsilon = epsilon
         self._rms_decay = rms_decay
+        self._use_approx_sharp = use_approx_sharp
         self._use_locking = use_locking
 
     def print_flags(self, n_images):
@@ -66,6 +74,7 @@ class Experiment(object):
         rms_decay = (["--rms-decay=%f" % self._rms_decay] if self._rms_decay
                      else [])
         locking = ["--use-locking"] if self._use_locking else []
+        approx = ["--use-approx-sharp"] if self._use_approx_sharp else []
 
         max_steps = n_images / self._batch_size
         return (["--training-method=%s" % self._method,
@@ -73,7 +82,7 @@ class Experiment(object):
                  "--batch-size=%d" % self._batch_size,
                  "--learning-rate=%f" % self._lr,
                  "--learning-rate-decay=%f" % self._lr_decay] +
-                momentum + epsilon + rms_decay + locking)
+                momentum + epsilon + rms_decay + locking + approx)
 
     def __str__(self):
         str_momentum = ("momentum: %f\n" % self._momentum if self._momentum
@@ -100,26 +109,28 @@ exp_dic = {
     "rmsprop": Experiment(name="rmsprop", method="rmsprop", batch_size=128,
                           lr=0.01, lr_decay=.01,
                           momentum=.9, epsilon=0.1, rms_decay=.9,
-                          use_locking=True),
+                          use_locking=not args.assync),
 
     "rmsprop-no-mom": Experiment(name="rmsprop-no-mom", method="rmsprop",
                                  batch_size=128,
-                                 lr=0.01, lr_decay=.01,
-                                 momentum=0, epsilon=0.1, rms_decay=.9,
-                                 use_locking=True),
+                                 lr=0.5, lr_decay=.9,
+                                 momentum=0, epsilon=0.00001, rms_decay=.9,
+                                 use_locking=not args.assync),
 
     "rmsspectral":  Experiment(name="rmsspectral", method="rmsspectral",
-                               batch_size=1024, lr=.001,
+                               batch_size=1024, lr=.01,
                                lr_decay=.5, momentum=.9, epsilon=0.05,
                                rms_decay=.98,
-                               use_locking=True),
+                               use_locking=not args.assync,
+                               use_approx_sharp=args.approx),
 
     "rmsspectral-no-mom":  Experiment(name="rmsspectral-no-mom",
                                       method="rmsspectral",
-                                      batch_size=1024,
-                                      lr=.01, lr_decay=.5, momentum=0,
+                                      batch_size=128,
+                                      lr=.01, lr_decay=.9, momentum=0,
                                       epsilon=0.05, rms_decay=.9,
-                                      use_locking=True)
+                                      use_locking=not args.assync,
+                                      use_approx_sharp=args.approx)
 }
 
 

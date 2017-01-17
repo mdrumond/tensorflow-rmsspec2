@@ -32,11 +32,14 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+from tensorflow.python.framework import dtypes
+from tensorflow.python.framework import constant_op
 from tensorflow.python.ops import math_ops
 from tensorflow.python.ops import control_flow_ops
 from tensorflow.python.ops import linalg_ops
 from tensorflow.python.ops import array_ops
 from tensorflow.python import training
+from tensorflow.python.training import training_ops
 
 
 class RMSSpectralOptimizer(training.rmsprop.RMSPropOptimizer):
@@ -54,51 +57,40 @@ class RMSSpectralOptimizer(training.rmsprop.RMSPropOptimizer):
                  momentum=0.0,
                  epsilon=1e-10,
                  svd_approx_size=30,
+                 use_approx_sharp=True,
                  use_locking=False,
                  name="RMSSpectral"):
         super(RMSSpectralOptimizer, self).__init__(learning_rate, decay,
                                                    momentum, epsilon,
                                                    use_locking, name)
         self._svd_approx_size = svd_approx_size
+        self._use_approx_sharp = use_approx_sharp
 
-    def _approxSharp(self, m, k):
-        u, s, v = linalg_ops.matrix_decomp_svd_rand(m, k)
-        return (math_ops.matmul(u, array_ops.transpose(v)) *
-                math_ops.reduce_sum(s))
-
-    def _sharpOp(self, vector):
-        s, u ,v  = linalg_ops.svd(vector)
-
+    def _create_slots(self, var_list):
+        for v in var_list:
+            if ((len(v.get_shape()) == 1) or (len(v.get_shape()) == 4)):
+                val = constant_op.constant(1.0, dtype=v.dtype, shape=v.get_shape())
+                val1 = constant_op.constant(0.0, dtype=v.dtype, shape=v.get_shape())
+            else:
+                val = constant_op.constant(1.0, dtype=v.dtype, shape=v.get_shape())          
+                val1 = constant_op.constant(0.0, dtype=v.dtype, shape=v.get_shape())          
+            self._get_or_make_slot(v, val, "rms", self._name)
+            self._get_or_make_slot(v, val1, "momentum", self._name)
         
-        return (math_ops.matmul(u, array_ops.transpose(v)) *
-                math_ops.reduce_sum(s))
-
     def _apply_rms_spectral(self, grad, var):
         # see if variable updates need something special
         # might have to resize the variables (they are suposedly flat)
         rms = self.get_slot(var, "rms")
         mom = self.get_slot(var, "momentum")
 
-        momentum = math_ops.cast(self._momentum_tensor, var.dtype.base_dtype)
-        lr = math_ops.cast(self._learning_rate_tensor, var.dtype.base_dtype)
-        decay = math_ops.cast(self._decay_tensor, var.dtype.base_dtype)
-        epsilon = math_ops.cast(self._epsilon_tensor, var.dtype.base_dtype)
-
-        rms_update = rms.assign(decay * rms +
-                                (1 - decay) *
-                                math_ops.square(grad))
-        aux = math_ops.sqrt(math_ops.sqrt(rms_update)+epsilon)
-
-        #sharpGrad = (self._sharpOp(grad / aux) if min(grad.get_shape()) < self._svd_approx_size
-        #             else self._approxSharp(grad / aux, self._svd_approx_size))
-        sharpGrad = self._sharpOp(grad / aux)
-        update = (lr *
-                  (sharpGrad / aux))
-
-        mom_update = mom.assign(mom * momentum + update)
-        var_update = var.assign_sub(mom_update)
-
-        return control_flow_ops.group(*[var_update, rms_update, mom_update])
+        return training_ops.apply_rms_spectral(
+                    var, rms, mom,
+            math_ops.cast(self._learning_rate_tensor, var.dtype.base_dtype),
+            math_ops.cast(self._decay_tensor, var.dtype.base_dtype),
+            math_ops.cast(self._momentum_tensor, var.dtype.base_dtype),
+            math_ops.cast(self._epsilon_tensor, var.dtype.base_dtype),
+            grad, use_locking=self._use_locking,
+            use_approx_sharp=self._use_approx_sharp).op
 
     def _apply_dense(self, grad, var):
         # what about bias???

@@ -57,6 +57,7 @@ ops.RegisterShape("ApplyAdagradDA")(common_shapes.call_cpp_shape_fn)
 ops.RegisterShape("ApplyAdam")(common_shapes.call_cpp_shape_fn)
 ops.RegisterShape("ApplyMomentum")(common_shapes.call_cpp_shape_fn)
 ops.RegisterShape("ApplyRMSProp")(common_shapes.call_cpp_shape_fn)
+ops.RegisterShape("ApplyRMSSpectral")(common_shapes.call_cpp_shape_fn)
 ops.RegisterShape("ApplyGradientDescent")(common_shapes.call_cpp_shape_fn)
 ops.RegisterShape("ApplyProximalGradientDescent")(
     common_shapes.call_cpp_shape_fn)

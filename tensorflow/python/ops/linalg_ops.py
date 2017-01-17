@@ -231,9 +231,6 @@ def svd(tensor, compute_uv=True, full_matrices=False, name=None):
   else:
     return math_ops.real(s)
 
-def matrix_decomp_svd(matrix, name=None):
-  return gen_linalg_ops.matrix_decomp_svd(matrix, name=name)
-
 def _ShapeTensor(shape):
   """Convert to an int32 or int64 tensor, defaulting to int32 if empty."""
   if isinstance(shape, (tuple, list)) and not shape:

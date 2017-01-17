@@ -180,7 +180,8 @@ def train():
                                           decay=FLAGS.rms_decay,
                                           momentum=FLAGS.momentum,
                                           epsilon=FLAGS.epsilon,
-                                          use_locking=FLAGS.use_locking)
+                                          use_locking=FLAGS.use_locking,
+                                          use_approx_sharp=True)
 
     # Calculate the gradients for each model tower.
     tower_grads = []

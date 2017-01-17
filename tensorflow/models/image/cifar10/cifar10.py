@@ -62,6 +62,8 @@ tf.app.flags.DEFINE_string('training-method', 'sgd',
                            'Traiining method: sgd, rmsprop or rmsspectral')
 tf.app.flags.DEFINE_boolean('use-locking', False,
                             """Wether to do syncrhonous or assynch optimization.""")
+tf.app.flags.DEFINE_boolean('use-approx-sharp', False,
+                            """Wether to use approximated or precise sharp op""")
 tf.app.flags.DEFINE_boolean('use_fp16', False,
                             """Train the model using fp16.""")
 
@@ -166,6 +168,10 @@ def distorted_inputs():
   if FLAGS.use_fp16:
     images = tf.cast(images, tf.float16)
     labels = tf.cast(labels, tf.float16)
+  else:
+    images = tf.cast(images, tf.float32)
+    labels = tf.cast(labels, tf.float32)
+    
   return images, labels
 
 
@@ -191,6 +197,9 @@ def inputs(eval_data):
   if FLAGS.use_fp16:
     images = tf.cast(images, tf.float16)
     labels = tf.cast(labels, tf.float16)
+  else:
+    images = tf.cast(images, tf.float32)
+    labels = tf.cast(labels, tf.float32)
   return images, labels
 
 
