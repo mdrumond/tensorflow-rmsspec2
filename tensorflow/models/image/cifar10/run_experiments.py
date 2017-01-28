@@ -11,10 +11,14 @@ parser.add_argument('-e', '--experiment', action='append',
                     choices=['sgd', 'rmsprop', 'rmsprop-no-mom',
                              'rmsspectral',
                              'rmsspectral-no-mom'])
+parser.add_argument('--stage-dir',
+                    default='/data/cifar10/cifar10_train')
 parser.add_argument('-f', '--experiment-folder',
-                    default='./results')
+                    default='/data/cifar10/results')
 parser.add_argument('-n', '--number-images', type=int,
                     default=128000)
+parser.add_argument('-g', '--gpu-number', type=int,
+                    default=0)
 parser.add_argument('-t', action='store_true',
                     help='Test run, do not run QEMU, just prints command')
 parser.add_argument('--assync', action='store_true',
@@ -24,7 +28,7 @@ parser.add_argument('--approx', action='store_true',
 parser.add_argument('-F', '--force', action='store_true',
                     help='Force overwriting of results folders')
 parser.add_argument('-s', '--training-scripts',
-                    default='cifar10_multi_gpu_train.py')
+                    default='cifar10_train.py')
 
 args = parser.parse_args()
 
@@ -55,7 +59,9 @@ class Experiment(object):
     def __init__(self, name, method, batch_size, lr, lr_decay,
                  momentum=None, epsilon=None, rms_decay=None,
                  use_approx_sharp=False,
-                 use_locking=False):
+                 use_locking=False,
+                 gpu_number=0,
+                 stage_dir=args.stage_dir):
         self.name = name
         self._method = method
         self._batch_size = batch_size
@@ -66,7 +72,9 @@ class Experiment(object):
         self._rms_decay = rms_decay
         self._use_approx_sharp = use_approx_sharp
         self._use_locking = use_locking
-
+        self._stage_dir = os.path.join(stage_dir,name)
+        self._gpu_number = gpu_number
+        
     def print_flags(self, n_images):
 
         momentum = ["--momentum=%f" % self._momentum] if self._momentum else []
@@ -78,10 +86,12 @@ class Experiment(object):
 
         max_steps = n_images / self._batch_size
         return (["--training-method=%s" % self._method,
+                 "--train-dir=%s" % self._stage_dir,
                  "--max-steps=%d" % max_steps,
                  "--batch-size=%d" % self._batch_size,
                  "--learning-rate=%f" % self._lr,
-                 "--learning-rate-decay=%f" % self._lr_decay] +
+                 "--learning-rate-decay=%f" % self._lr_decay,
+                 "--gpu-number=%d" % self._gpu_number] +
                 momentum + epsilon + rms_decay + locking + approx)
 
     def __str__(self):
@@ -103,18 +113,21 @@ class Experiment(object):
 
 
 exp_dic = {
-    "sgd": Experiment(name="sgd", method="sgd", batch_size=128, lr=.1,
-                      lr_decay=.1),
+    "sgd": Experiment(name="sgd", method="sgd", batch_size=128, lr=.05,
+                      lr_decay=.5,
+                      use_locking=not args.assync,
+                      gpu_number=args.gpu_number),
 
     "rmsprop": Experiment(name="rmsprop", method="rmsprop", batch_size=128,
-                          lr=0.01, lr_decay=.01,
+                          lr=0.02, lr_decay=.5,
                           momentum=.9, epsilon=0.1, rms_decay=.9,
-                          use_locking=not args.assync),
+                          use_locking=not args.assync,
+                          gpu_number=args.gpu_number),
 
     "rmsprop-no-mom": Experiment(name="rmsprop-no-mom", method="rmsprop",
                                  batch_size=128,
-                                 lr=0.5, lr_decay=.9,
-                                 momentum=0, epsilon=0.00001, rms_decay=.9,
+                                 lr=0.02, lr_decay=.5,
+                                 momentum=0, epsilon=0.1, rms_decay=.9,
                                  use_locking=not args.assync),
 
     "rmsspectral":  Experiment(name="rmsspectral", method="rmsspectral",
@@ -122,14 +135,16 @@ exp_dic = {
                                lr_decay=.5, momentum=.9, epsilon=0.05,
                                rms_decay=.98,
                                use_locking=not args.assync,
+                               gpu_number=args.gpu_number,
                                use_approx_sharp=args.approx),
 
     "rmsspectral-no-mom":  Experiment(name="rmsspectral-no-mom",
                                       method="rmsspectral",
                                       batch_size=128,
-                                      lr=.01, lr_decay=.9, momentum=0,
-                                      epsilon=0.05, rms_decay=.9,
+                                      lr=.0001, lr_decay=.9, momentum=0,
+                                      epsilon=0.000001, rms_decay=.9,
                                       use_locking=not args.assync,
+                                      gpu_number=args.gpu_number,
                                       use_approx_sharp=args.approx)
 }
 
@@ -166,7 +181,7 @@ def run_experiment(exp, n_images, experiment_folder):
     else:
         checkpoints_dir = os.path.join(exp_dir, 'checkpoints')
         call(train_cmd)
-        shutil.copytree('cifar10_train/', checkpoints_dir)
+        shutil.copytree(args.stage_dir, checkpoints_dir)
 
 print(args)
 if args.experiment:

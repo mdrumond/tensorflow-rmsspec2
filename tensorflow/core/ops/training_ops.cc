@@ -793,4 +793,58 @@ use_locking: If `True`, updating of the var, m, and v tensors will be protected
   contention.
 )doc");
 
+static Status ApplyRMSSpectralShapeFn(InferenceContext* c) {
+  ShapeHandle unused;
+  ShapeHandle s = c->input(0);                               // var
+  TF_RETURN_IF_ERROR(c->Merge(s, c->input(1), &s));          // ms
+  TF_RETURN_IF_ERROR(c->Merge(s, c->input(2), &s));          // mom
+  TF_RETURN_IF_ERROR(c->WithRank(c->input(3), 0, &unused));  // lr
+  TF_RETURN_IF_ERROR(c->WithRank(c->input(4), 0, &unused));  // rho
+  TF_RETURN_IF_ERROR(c->WithRank(c->input(5), 0, &unused));  // momentum
+  TF_RETURN_IF_ERROR(c->WithRank(c->input(6), 0, &unused));  // epsilon
+  c->set_output(0, s);
+  return Status::OK();
+}
+
+REGISTER_OP("ApplyRMSSpectral")
+    .Input("var: Ref(T)")
+    .Input("ms: Ref(T)")
+    .Input("mom: Ref(T)")
+    .Input("lr: T")
+    .Input("rho: T")
+    .Input("momentum: T")
+    .Input("epsilon: T")
+    .Input("grad: T")
+    .Output("out: Ref(T)")
+    .Attr("T: numbertype")
+    .Attr("use_locking: bool = false")
+    .Attr("use_approx_sharp: bool = true")
+    .SetShapeFn(ApplyRMSSpectralShapeFn)
+    .Doc(R"doc(
+Update '*var' according to the RMSSpectral algorithm.
+Note that in dense implement of this algorithm, ms and mom will 
+update even if the grad is zero, but in this sparse implement, ms 
+and mom will not update in iterations the grad is zero.
+
+mean_square = decay * mean_square + (1-decay) * gradient ** 2
+Delta = learning_rate * gradient / sqrt(mean_square + epsilon)
+
+ms <- rho * ms_{t-1} + (1-rho) * grad * grad
+mom <- momentum * mom_{t-1} + lr * grad / sqrt(ms + epsilon)
+var <- var - mom
+
+var: Should be from a Variable().
+ms: Should be from a Variable().
+mom: Should be from a Variable().
+lr: Scaling factor. Must be a scalar.
+epsilon: Ridge term. Must be a scalar.
+rho: Decay rate. Must be a scalar.
+grad: The gradient.
+out: Same as "var".
+use_locking: If `True`, updating of the var, m, and v tensors will be protected
+  by a lock; otherwise the behavior is undefined, but may exhibit less
+  contention.
+)doc");
+  
+
 }  // namespace tensorflow

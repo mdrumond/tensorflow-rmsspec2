@@ -34,6 +34,7 @@ Summary of available functions:
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
+from tensorflow.python import control_flow_ops
 
 import gzip
 import os
@@ -76,7 +77,7 @@ NUM_EXAMPLES_PER_EPOCH_FOR_EVAL = cifar10_input.NUM_EXAMPLES_PER_EPOCH_FOR_EVAL
 
 # Constants describing the training process.
 MOVING_AVERAGE_DECAY = 0.9999     # The decay to use for the moving average.
-NUM_EPOCHS_PER_DECAY = 350.0      # Epochs after which learning rate decays.
+NUM_EPOCHS_PER_DECAY = 10.0      # Epochs after which learning rate decays.
 LEARNING_RATE_DECAY_FACTOR = FLAGS.learning_rate_decay  # Learning rate decay factor.
 INITIAL_LEARNING_RATE = FLAGS.learning_rate       # Initial learning rate.
 
@@ -285,13 +286,33 @@ def inference(images):
 
   return softmax_linear
 
+def loss_per_batch(logits, labels):
+  """
+  labels = tf.cast(labels, tf.int64)
+  labels = tf.one_hot(indices=labels, on_value=1.0, off_value=0.0,
+                      dtype=tf.float32,
+                      depth=10,
+                      axis=-1)
+  logit_label = -tf.reduce_sum(labels * logits,
+                               reduction_indices=[1])
+  log_exp_sum = tf.log(tf.reduce_sum(tf.exp(logits),
+                          reduction_indices=[1]))
+  
+  return logit_label + log_exp_sum
+  """
 
+  labels = tf.cast(labels, tf.int64)
+  return  tf.nn.sparse_softmax_cross_entropy_with_logits(
+    logits, labels, name='cross_entropy_per_example')
+  
+
+  
 def loss(logits, labels):
   """Add L2Loss to all the trainable variables.
 
   Add summary for "Loss" and "Loss/avg".
   Args:
-    logits: Logits from inference().
+    logits: Logits from inference(). [batch_size, num_classes]
     labels: Labels from distorted_inputs or inputs(). 1-D tensor
             of shape [batch_size]
 
@@ -299,12 +320,19 @@ def loss(logits, labels):
     Loss tensor of type float.
   """
   # Calculate the average cross entropy loss across the batch.
+  """
   labels = tf.cast(labels, tf.int64)
   cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(
       logits, labels, name='cross_entropy_per_example')
   cross_entropy_mean = tf.reduce_mean(cross_entropy, name='cross_entropy')
-  tf.add_to_collection('losses', cross_entropy_mean)
+  """
 
+  
+  cross_entropy = loss_per_batch(logits,labels)
+  cross_entropy_mean = tf.reduce_mean(cross_entropy,
+                                      name='xentropy_mean')
+  tf.add_to_collection('losses', cross_entropy_mean)
+  
   # The total loss is defined as the cross entropy loss plus all of the weight
   # decay terms (L2 loss).
   return tf.add_n(tf.get_collection('losses'), name='total_loss')
@@ -337,7 +365,39 @@ def _add_loss_summaries(total_loss):
   return loss_averages_op
 
 
-def train(total_loss, global_step):
+
+def batch_norm(x, n_out, phase_train, scope='bn'):
+    """
+    Batch normalization on convolutional maps.
+    Args:
+        x:           Tensor, 4D BHWD input maps
+        n_out:       integer, depth of input maps
+        phase_train: boolean tf.Varialbe, true indicates training phase
+        scope:       string, variable scope
+    Return:
+        normed:      batch-normalized maps
+    """
+    with tf.variable_scope(scope):
+        beta = tf.Variable(tf.constant(0.0, shape=[n_out]),
+                                     name='beta', trainable=True)
+        gamma = tf.Variable(tf.constant(1.0, shape=[n_out]),
+                                      name='gamma', trainable=True)
+        batch_mean, batch_var = tf.nn.moments(x, [0,1,2], name='moments')
+        ema = tf.train.ExponentialMovingAverage(decay=0.5)
+
+        def mean_var_with_update():
+            ema_apply_op = ema.apply([batch_mean, batch_var])
+            with tf.control_dependencies([ema_apply_op]):
+                return tf.identity(batch_mean), tf.identity(batch_var)
+
+        mean, var = tf.cond(phase_train,
+                            mean_var_with_update,
+                            lambda: (ema.average(batch_mean), ema.average(batch_var)))
+        normed = tf.nn.batch_normalization(x, mean, var, beta, gamma, 1e-3)
+    return normed
+
+  
+def train(total_loss, global_step, gpu_number):
   """Train CIFAR-10 model.
 
   Create an optimizer and apply to all trainable variables. Add moving
@@ -353,7 +413,8 @@ def train(total_loss, global_step):
   # Variables that affect learning rate.
   num_batches_per_epoch = NUM_EXAMPLES_PER_EPOCH_FOR_TRAIN / FLAGS.batch_size
   decay_steps = int(num_batches_per_epoch * NUM_EPOCHS_PER_DECAY)
-
+  print("Decay steps: %d" % decay_steps)
+  
   # Decay the learning rate exponentially based on the number of steps.
   lr = tf.train.exponential_decay(INITIAL_LEARNING_RATE,
                                   global_step,
@@ -381,7 +442,7 @@ def train(total_loss, global_step):
                                           momentum=FLAGS.momentum,
                                           epsilon=FLAGS.epsilon,
                                           use_locking=FLAGS.use_locking)
-      
+    #with tf.device('/gpu:%d' % gpu_number):
     grads = opt.compute_gradients(total_loss)
 
   # Apply gradients.
